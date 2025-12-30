@@ -1,0 +1,39 @@
+Cartographer SLAM 状态保存信息
+=====================================
+
+保存时间: Tue Dec 30 18:00:36 UTC 2025
+机器人命名空间: robot1
+状态名称: test1
+
+文件列表:
+---------
+1. SLAM 状态: test1.pbstream (主文件)
+2. 地图图像: test1_map.pgm
+3. 地图配置: test1_map.yaml
+4. 元数据: test1_info.txt
+
+文件大小:
+---------
+lrwxrwxrwx 1 ubuntu ubuntu   64 Dec 30 17:58 latest.pbstream -> /workspaces/AURO2025/solution/cartographer_states/test1.pbstream
+-rwxr-xr-x 1 ubuntu ubuntu  802 Dec 30 17:58 resume_test1.sh
+-rw-r--r-- 1 ubuntu ubuntu 297K Dec 30 18:00 test1.pbstream
+-rw-r--r-- 1 ubuntu ubuntu    0 Dec 30 18:00 test1_info.txt
+-rw-r--r-- 1 ubuntu ubuntu  18K Dec 30 18:00 test1_map.pgm
+-rw-r--r-- 1 ubuntu ubuntu  126 Dec 30 18:00 test1_map.yaml
+
+如何继续建图:
+-----------
+# 终端 1 - 仿真
+ros2 launch assessment assessment.launch.py \
+  num_robots:=1 use_nav2:=false headless:=false random_seed:=42
+
+# 终端 2 - 加载 SLAM 状态并继续建图
+bash 加载Cartographer状态.sh robot1 /workspaces/AURO2025/solution/cartographer_states/test1.pbstream
+
+# 终端 3 - LLM 建图
+cd /workspaces/AURO2025 && source install/setup.bash
+export OPENAI_API_KEY="你的API密钥"
+ros2 run solution llm_mapper --ros-args --remap __ns:=/robot1
+
+或者使用快速加载脚本:
+bash /workspaces/AURO2025/solution/cartographer_states/resume_test1.sh

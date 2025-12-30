@@ -1,0 +1,18 @@
+# 终端 1 - 仿真
+ros2 launch assessment assessment.launch.py \
+  num_robots:=1 use_nav2:=false headless:=false random_seed:=42
+
+# 终端 2 - SLAM
+ros2 launch assessment cartographer.launch.py \
+  ns:=robot1 use_sim_time:=true use_rviz:=true
+
+# 终端 3 - LLM 建图
+cd /workspaces/AURO2025 && source install/setup.bash
+ros2 run solution llm_mapper --ros-args --remap __ns:=/robot1
+
+## 手动操作机器人
+ros2 run turtlebot3_teleop teleop_keyboard   --ros-args --remap cmd_vel:=/robot1/cmd_vel
+
+# 终端 4 - 保存地图（2小时后）
+ros2 run nav2_map_server map_saver_cli -f solution/config/map2 \
+  --ros-args -r map:=/robot1/map
