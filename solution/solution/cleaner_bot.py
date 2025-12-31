@@ -32,6 +32,8 @@ from auro_interfaces.srv import ItemRequest
 from nav2_msgs.action import NavigateToPose
 
 from tf2_ros import Buffer, TransformListener, TransformException
+from rcl_interfaces.srv import SetParameters
+from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 
 
 class State(Enum):
@@ -39,6 +41,7 @@ class State(Enum):
     SEARCHING = auto()
     APPROACHING = auto()  # Nav2 getting close to barrel
     RAMMING = auto()      # Direct forward to push through barrel
+    RECOVER_LOCALIZATION = auto()  # Spin to fix AMCL after ramming
     NAVIGATING_TO_GREEN = auto()
     DELIVERING = auto()
     NAVIGATING_TO_CYAN = auto()
@@ -95,6 +98,7 @@ class CleanerBot(Node):
         self.right_side_min_dist = 10.0
         self.front_left_min_dist = 10.0
         self.front_right_min_dist = 10.0
+        self.rear_min_dist = 10.0  # For ramming backup phase
         # Raw LiDAR ranges for distance lookup
         self.lidar_ranges = []
 
@@ -107,6 +111,16 @@ class CleanerBot(Node):
         self.nav_goal_handle = None
         self.nav_result_future = None
         self.nav_active = False
+
+        # Stuck detection
+        self.last_pos_x = 0.0
+        self.last_pos_y = 0.0
+        self.stuck_counter = 0
+        self.STUCK_THRESHOLD = 30  # 3 seconds at 10Hz without movement
+        self.STUCK_DISTANCE = 0.1  # Must move at least 0.1m in 3 seconds
+        self.recovery_counter = 0
+        self.in_recovery = False
+        self.recovery_phase = 0  # 0=turn to open space, 1=forward, 2=backup
 
         # Service call state
         self.service_future = None
@@ -127,9 +141,17 @@ class CleanerBot(Node):
         self.approach_counter = 0
         self.MAX_APPROACH_ATTEMPTS = 100  # 10 seconds at 10Hz
         self.lost_sight_counter = 0
+        self.approach_target = None  # (x, y) 目标位置，进入APPROACHING时设置，不再更新
 
         # Ramming state
         self.ram_counter = 0
+        self.ram_phase = 0  # 0=forward, 1=turning, 2=backup
+        self.turn_counter = 0
+        self.backup_counter = 0
+
+        # Recover localization state (after ramming, spin to fix AMCL)
+        self.recover_counter = 0
+        self.recover_phase = 0  # 0=backup, 1=spin 360, 2=done
         self.MAX_RAM_ATTEMPTS = 100  # 10 seconds at 10Hz
 
         # Search waypoints - cover the map
@@ -148,9 +170,10 @@ class CleanerBot(Node):
             (14, 15.0),
         ]
 
-        # Zone locations
-        self.green_zone_approx = (8.0, 8.0)
-        self.cyan_zone_approx = (2.0, 8.0)
+        # Zone locations (based on map coordinates)
+        # 右上角三个串联房间
+        self.cyan_zone_approx = (9.5, -10.0)   # 第一个房间 - 消毒区
+        self.green_zone_approx = (9.5, -20.0)  # 第二个房间 - 交付区
 
         # Publishers
         cmd_vel_topic = f'{self.robot_namespace}/cmd_vel'
@@ -193,6 +216,12 @@ class CleanerBot(Node):
             callback_group=self.service_callback_group)
         self.decontam_client = self.create_client(
             ItemRequest, '/decontaminate',
+            callback_group=self.service_callback_group)
+
+        # Dynamic mask parameter client (to disable rear LiDAR when carrying barrel)
+        dynamic_mask_param_service = f'{self.robot_namespace}/dynamic_mask/set_parameters'
+        self.dynamic_mask_param_client = self.create_client(
+            SetParameters, dynamic_mask_param_service,
             callback_group=self.service_callback_group)
 
         # Wait for services
@@ -241,6 +270,13 @@ class CleanerBot(Node):
 
     def odom_callback(self, msg):
         # Get robot position in MAP frame using TF
+        # 调试：记录odom收到次数
+        if not hasattr(self, '_odom_count'):
+            self._odom_count = 0
+        self._odom_count += 1
+        if self._odom_count <= 3:
+            self.get_logger().info(f'Odom received #{self._odom_count}: ({msg.pose.pose.position.x:.2f}, {msg.pose.pose.position.y:.2f})')
+
         # Try multiple frame name variations
         frame_options = [
             f'{self.robot_name}/base_link',  # robot1/base_link
@@ -280,9 +316,9 @@ class CleanerBot(Node):
             siny_cosp = 2 * (q.w * q.z + q.x * q.y)
             cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
             self.map_yaw = math.atan2(siny_cosp, cosy_cosp)
-            # Mark position as valid if odom data is non-zero
-            if abs(self.map_x) > 0.01 or abs(self.map_y) > 0.01:
-                self.position_valid = True
+            # 总是标记为valid，因为odom数据是可用的
+            # 即使在原点也是有效位置
+            self.position_valid = True
 
     def radiation_callback(self, msg):
         for rad in msg.data:
@@ -320,6 +356,10 @@ class CleanerBot(Node):
         # Front-right: 300 to 330 degrees (for immediate corner detection)
         front_right_ranges = list(msg.ranges[300:330])
         self.front_right_min_dist = get_min_range(front_right_ranges)
+
+        # Rear: 150 to 210 degrees (behind robot, for ramming backup)
+        rear_ranges = list(msg.ranges[150:210])
+        self.rear_min_dist = get_min_range(rear_ranges)
 
     # ==================== HELPERS ====================
 
@@ -459,6 +499,77 @@ class CleanerBot(Node):
         twist = Twist()
         self.cmd_vel_pub.publish(twist)
 
+    def set_lidar_mask(self, sector: str):
+        """Enable or disable LiDAR masking for specific sector.
+
+        Args:
+            sector: 'front' (330-30°), 'rear' (150-210°), or 'none' (disable)
+        """
+        if not self.dynamic_mask_param_client.service_is_ready():
+            self.get_logger().warn('Dynamic mask param service not ready')
+            return
+
+        request = SetParameters.Request()
+
+        if sector == 'front':
+            # Mask front sector: 330° to 30° (barrel in front of robot)
+            start_param = Parameter()
+            start_param.name = 'ignore_sector_start'
+            start_param.value = ParameterValue()
+            start_param.value.type = ParameterType.PARAMETER_DOUBLE
+            start_param.value.double_value = 330.0
+
+            end_param = Parameter()
+            end_param.name = 'ignore_sector_end'
+            end_param.value = ParameterValue()
+            end_param.value.type = ParameterType.PARAMETER_DOUBLE
+            end_param.value.double_value = 30.0
+
+            mask_param = Parameter()
+            mask_param.name = 'mask_enabled'
+            mask_param.value = ParameterValue()
+            mask_param.value.type = ParameterType.PARAMETER_BOOL
+            mask_param.value.bool_value = True
+
+            request.parameters = [start_param, end_param, mask_param]
+            self.get_logger().info('Enabling front LiDAR mask (330-30°) for barrel')
+
+        elif sector == 'rear':
+            # Mask rear sector: 150° to 210° (barrel behind robot)
+            start_param = Parameter()
+            start_param.name = 'ignore_sector_start'
+            start_param.value = ParameterValue()
+            start_param.value.type = ParameterType.PARAMETER_DOUBLE
+            start_param.value.double_value = 150.0
+
+            end_param = Parameter()
+            end_param.name = 'ignore_sector_end'
+            end_param.value = ParameterValue()
+            end_param.value.type = ParameterType.PARAMETER_DOUBLE
+            end_param.value.double_value = 210.0
+
+            mask_param = Parameter()
+            mask_param.name = 'mask_enabled'
+            mask_param.value = ParameterValue()
+            mask_param.value.type = ParameterType.PARAMETER_BOOL
+            mask_param.value.bool_value = True
+
+            request.parameters = [start_param, end_param, mask_param]
+            self.get_logger().info('Enabling rear LiDAR mask (150-210°) for barrel')
+
+        else:  # 'none' or any other value
+            # Disable mask
+            mask_param = Parameter()
+            mask_param.name = 'mask_enabled'
+            mask_param.value = ParameterValue()
+            mask_param.value.type = ParameterType.PARAMETER_BOOL
+            mask_param.value.bool_value = False
+
+            request.parameters = [mask_param]
+            self.get_logger().info('Disabling LiDAR mask')
+
+        self.dynamic_mask_param_client.call_async(request)
+
     def send_nav_goal(self, x, y, yaw=0.0):
         if not self.use_nav2:
             return False
@@ -531,6 +642,80 @@ class CleanerBot(Node):
                 f'STATE: {self.state.name} pos=({self.map_x:.1f},{self.map_y:.1f}) [{pos_status}]'
             )
 
+        # # Stuck detection and recovery (DISABLED - was causing issues)
+        # if self.in_recovery:
+        #     self.recovery_counter += 1
+        #     twist = Twist()
+        #
+        #     # Phase 0: 转向开阔方向 (10 ticks = 1秒)
+        #     if self.recovery_phase == 0:
+        #         # 选择左前方或右前方更开阔的方向
+        #         if self.front_left_min_dist > self.front_right_min_dist:
+        #             twist.angular.z = 0.5  # 左转
+        #         else:
+        #             twist.angular.z = -0.5  # 右转
+        #         twist.linear.x = 0.0
+        #
+        #         if self.recovery_counter > 10:
+        #             self.get_logger().info('Recovery: turned, now moving forward')
+        #             self.recovery_phase = 1
+        #             self.recovery_counter = 0
+        #
+        #     # Phase 1: 向前走 (15 ticks = 1.5秒)
+        #     elif self.recovery_phase == 1:
+        #         twist.linear.x = 0.2
+        #         twist.angular.z = 0.0
+        #
+        #         if self.recovery_counter > 15:
+        #             self.get_logger().info('Recovery: forward done, checking if still stuck')
+        #             self.recovery_phase = 2
+        #             self.recovery_counter = 0
+        #
+        #     # Phase 2: 如果前方还是堵住，倒车 (15 ticks = 1.5秒)
+        #     elif self.recovery_phase == 2:
+        #         if self.front_min_dist < 0.4:
+        #             # 前方还是堵住，倒车
+        #             twist.linear.x = -0.2
+        #             twist.angular.z = 0.0
+        #             if self.recovery_counter > 15:
+        #                 self.get_logger().info('Recovery complete (backed up)')
+        #                 self.in_recovery = False
+        #                 self.recovery_counter = 0
+        #                 self.recovery_phase = 0
+        #                 self.stuck_counter = 0
+        #                 self.last_pos_x = self.map_x
+        #                 self.last_pos_y = self.map_y
+        #         else:
+        #             # 前方开阔了，恢复完成
+        #             self.get_logger().info('Recovery complete (path clear)')
+        #             self.in_recovery = False
+        #             self.recovery_counter = 0
+        #             self.recovery_phase = 0
+        #             self.stuck_counter = 0
+        #             self.last_pos_x = self.map_x
+        #             self.last_pos_y = self.map_y
+        #
+        #     self.cmd_vel_pub.publish(twist)
+        #     return  # Skip normal state machine during recovery
+        #
+        # # Check if stuck (only during navigation states)
+        # if self.state in [State.NAVIGATING_TO_GREEN, State.NAVIGATING_TO_CYAN, State.SEARCHING]:
+        #     dist_moved = math.sqrt((self.map_x - self.last_pos_x)**2 + (self.map_y - self.last_pos_y)**2)
+        #
+        #     if dist_moved < self.STUCK_DISTANCE:
+        #         self.stuck_counter += 1
+        #         if self.stuck_counter > self.STUCK_THRESHOLD:
+        #             self.get_logger().warn(f'STUCK detected! Trying to escape... (moved only {dist_moved:.2f}m in 3s)')
+        #             self.cancel_navigation()
+        #             self.in_recovery = True
+        #             self.recovery_counter = 0
+        #             self.recovery_phase = 0
+        #     else:
+        #         # Moving, reset stuck counter and update position
+        #         self.stuck_counter = 0
+        #         self.last_pos_x = self.map_x
+        #         self.last_pos_y = self.map_y
+
         # State machine
         if self.state == State.IDLE:
             self.stop_robot()
@@ -543,6 +728,9 @@ class CleanerBot(Node):
 
         elif self.state == State.RAMMING:
             self._handle_ramming()
+
+        elif self.state == State.RECOVER_LOCALIZATION:
+            self._handle_recover_localization()
 
         elif self.state == State.NAVIGATING_TO_GREEN:
             self._handle_nav_to_green()
@@ -582,29 +770,39 @@ class CleanerBot(Node):
                     if abs(x_offset) < 150 and self.front_min_dist < 0.8:
                         self.get_logger().info(f'BARREL HUGE! size={best.size:.0f} x={best.x:.0f} front={self.front_min_dist:.2f}m -> RAMMING')
                         self.cancel_navigation()
+                        self.set_lidar_mask('front')  # 屏蔽前方雷达，防止Nav2干扰
                         self.ram_counter = 0
+                        self.ram_phase = 0
+                        self.turn_counter = 0  # 重置旋转计数器
                         self.lost_sight_counter = 0
                         self.state = State.RAMMING
                         return
                     else:
                         # Barrel is big but not centered or too far - go to APPROACHING
-                        self.get_logger().info(f'BARREL HUGE but not ready: size={best.size:.0f} x={best.x:.0f} front={self.front_min_dist:.2f}m -> APPROACHING')
-                        self.cancel_navigation()
-                        self.approach_counter = 0
-                        self.lost_sight_counter = 0
-                        self.state = State.APPROACHING
+                        barrel_pos = self.estimate_barrel_world_position(best)
+                        if barrel_pos:
+                            self.get_logger().info(f'BARREL HUGE but not ready: size={best.size:.0f} x={best.x:.0f} front={self.front_min_dist:.2f}m -> APPROACHING')
+                            self.cancel_navigation()
+                            self.approach_counter = 0
+                            self.lost_sight_counter = 0
+                            self.approach_target = barrel_pos  # 记录目标位置
+                            self.set_lidar_mask('front')  # 屏蔽前方雷达
+                            self.state = State.APPROACHING
                         return
 
-                # If barrel is CLOSE (but not huge), switch to visual approach
-                # This is the only time we use visual servoing - when very close
-                if best.size > 3000:  # Close enough for visual servoing
+                # If barrel is CLOSE (but not huge), switch to APPROACHING with Nav2
+                if best.size > 3000:  # Close enough to approach
                     x_offset = best.x - self.IMAGE_CENTER_X
                     if abs(x_offset) < 100:  # And reasonably centered
-                        self.get_logger().info(f'BARREL CLOSE! size={best.size:.0f} -> APPROACHING')
-                        self.cancel_navigation()
-                        self.approach_counter = 0
-                        self.lost_sight_counter = 0
-                        self.state = State.APPROACHING
+                        barrel_pos = self.estimate_barrel_world_position(best)
+                        if barrel_pos:
+                            self.get_logger().info(f'BARREL CLOSE! size={best.size:.0f} -> APPROACHING')
+                            self.cancel_navigation()
+                            self.approach_counter = 0
+                            self.lost_sight_counter = 0
+                            self.approach_target = barrel_pos  # 记录目标位置
+                            self.set_lidar_mask('front')  # 屏蔽前方雷达
+                            self.state = State.APPROACHING
                         return
 
                 # ALWAYS use Nav2 to navigate to barrel position
@@ -624,58 +822,97 @@ class CleanerBot(Node):
             self.send_nav_goal(wp[0], wp[1])
 
     def _handle_approaching(self):
-        """Visual servoing approach - ONLY called when path is clear.
+        """APPROACHING: 使用Nav2导航到桶的位置，避免撞墙。
 
-        This state is entered only after confirming no wall is blocking.
-        Simple strategy: keep barrel centered, move forward until close enough to ram.
+        目标位置在进入APPROACHING时设置(approach_target)，不会更新。
+        Nav2会自动避障。当桶足够大且距离足够近时，切换到RAMMING。
+        如果Nav2认为到达但距离还远，使用视觉伺服直接前进。
         """
         self.approach_counter += 1
 
-        # No timeout - keep approaching as long as we see the barrel
-
         red_barrels = self.get_red_barrels()
 
-        if not red_barrels:
+        # 检查是否可以进入RAMMING
+        if red_barrels:
+            self.lost_sight_counter = 0
+            best = max(red_barrels, key=lambda b: b.size)
+
+            # 检查是否足够近可以RAMMING
+            # 必须: 桶可见且非常大(>25000) AND LiDAR距离足够近(<0.8m)
+            if best.size > self.BARREL_SIZE_COMMIT and self.front_min_dist < 0.8:
+                self.get_logger().info(f'BARREL VERY CLOSE! size={best.size:.0f} front={self.front_min_dist:.2f}m -> RAMMING')
+                self.cancel_navigation()
+                self.approach_target = None  # 清除目标
+                # 保持前方mask，APPROACHING已经启用了，不要取消
+                self.ram_counter = 0
+                self.ram_phase = 0
+                self.turn_counter = 0  # 重置旋转计数器
+                self.lost_sight_counter = 0
+                self.state = State.RAMMING
+                return
+
+            # Nav2认为到达但距离还远 -> 使用视觉伺服直接前进
+            if not self.is_navigation_active() and self.front_min_dist > 0.4:
+                # 视觉伺服：对准桶并前进
+                x_offset = best.x - self.IMAGE_CENTER_X
+                twist = Twist()
+
+                if abs(x_offset) > 150:
+                    # 偏移太大，原地转向对准（不前进，防止撞墙）
+                    twist.angular.z = -0.5 if x_offset > 0 else 0.5
+                    twist.linear.x = 0.0
+                elif abs(x_offset) > 50:
+                    # 中等偏移，慢速前进+转向
+                    twist.angular.z = -0.4 if x_offset > 0 else 0.4
+                    twist.linear.x = 0.1
+                else:
+                    # 对准了，全速前进
+                    twist.linear.x = 0.26
+                    twist.angular.z = 0.0
+
+                self.cmd_vel_pub.publish(twist)
+
+                if self.approach_counter % 10 == 0:
+                    self.get_logger().info(f'APPROACHING: Visual servo, barrel_size={best.size:.0f} x_offset={x_offset:.0f} front={self.front_min_dist:.2f}m')
+                return
+
+        else:
             self.lost_sight_counter += 1
-            if self.lost_sight_counter > 30:  # 3 seconds
-                self.get_logger().warn('Lost barrel, back to search')
-                self.stop_robot()
+            # 丢失视野太久，可能桶被推开或者根本不是桶
+            # 不要轻易进入RAMMING，返回SEARCHING重新寻找
+            if self.lost_sight_counter > 30:  # 3秒看不到桶
+                self.get_logger().warn(f'Lost sight for too long ({self.lost_sight_counter} ticks) -> back to SEARCHING')
+                self.cancel_navigation()
+                self.approach_target = None
+                self.set_lidar_mask('none')
                 self.state = State.SEARCHING
                 return
-            self.stop_robot()
-            return
 
-        # Found barrel
-        self.lost_sight_counter = 0
-        best = max(red_barrels, key=lambda b: b.size)
-
-        # Check if close enough to start ramming
-        # Need both: large size AND close LiDAR distance
-        if best.size > self.BARREL_SIZE_COMMIT and self.front_min_dist < 0.8:
-            self.get_logger().info(f'BARREL CLOSE! size={best.size:.0f} front={self.front_min_dist:.2f}m -> RAMMING')
-            self.ram_counter = 0
-            self.lost_sight_counter = 0
-            self.state = State.RAMMING
-            return
-
-        # Simple visual servoing: keep barrel centered, move forward at full speed
-        x_offset = best.x - self.IMAGE_CENTER_X
-        angular_z = -0.005 * x_offset
-        angular_z = max(-0.5, min(0.5, angular_z))
-
-        twist = Twist()
-        twist.linear.x = 0.26  # Full speed during approach
-        twist.angular.z = angular_z
-        self.cmd_vel_pub.publish(twist)
+        # 使用Nav2导航到目标位置（只发送一次）
+        if self.approach_target and not self.is_navigation_active():
+            self.get_logger().info(f'APPROACHING: Nav2 to target ({self.approach_target[0]:.1f}, {self.approach_target[1]:.1f})')
+            self.send_nav_goal(self.approach_target[0], self.approach_target[1])
 
         # Log occasionally
         if self.approach_counter % 10 == 0:
+            barrel_info = ""
+            if red_barrels:
+                best = max(red_barrels, key=lambda b: b.size)
+                barrel_info = f" barrel_size={best.size:.0f}"
             self.get_logger().info(
-                f'APPROACH: size={best.size:.0f} x={best.x:.0f} ang={angular_z:.2f}'
+                f'APPROACHING: count={self.approach_counter} front={self.front_min_dist:.2f}m nav_active={self.nav_active}{barrel_info}'
             )
 
     def _handle_ramming(self):
-        """Ram: Drive forward to push through barrel, try pickup."""
+        """Ram: 向前靠近 → 刹停 → 旋转180度 → 刹停 → 向后倒车 + 持续尝试pickup
+
+        Phases:
+        0: 向前靠近直到足够近 (front_min_dist < 0.4m, 约1.5个机器人直径)
+        1: 刹停 (10个tick确保线速度完全为0)
+        2: 旋转180度 (约40个tick)
+        3: 刹停 (10个tick确保角速度完全为0)
+        4: 向后倒车并持续尝试pickup (不转向)
+        """
         self.ram_counter += 1
 
         # Check if previous pickup call completed
@@ -687,90 +924,164 @@ class CleanerBot(Node):
                     self.has_barrel = True
                     self.collected_count += 1
                     self.stop_robot()
-                    self.state = State.NAVIGATING_TO_GREEN
+                    # Enable rear LiDAR mask to ignore barrel behind robot
+                    self.set_lidar_mask('rear')
+                    # Go to RECOVER first to fix AMCL localization after ramming
+                    self.recover_counter = 0
+                    self.recover_phase = 0
+                    self.state = State.RECOVER_LOCALIZATION
+                    self.get_logger().info('Pickup success! -> RECOVER_LOCALIZATION to fix odometry drift')
                     self.service_pending = False
                     self.service_future = None
                     return
+                # pickup失败，继续尝试
                 self.service_pending = False
                 self.service_future = None
 
-        # No timeout - keep ramming as long as we see the barrel
-
-        # Get barrel info
-        red_barrels = self.get_red_barrels()
-
         twist = Twist()
 
-        if red_barrels:
-            self.lost_sight_counter = 0  # Reset lost sight counter
-            best = max(red_barrels, key=lambda b: b.size)
-            x_offset = best.x - self.IMAGE_CENTER_X
-
-            # Log progress
-            if self.ram_counter % 10 == 0:
+        # Log progress
+        if self.ram_counter % 10 == 0:
+            # Phase 4时显示rear距离（倒车撞桶），其他阶段显示front
+            if self.ram_phase == 4:
                 self.get_logger().info(
-                    f'RAMMING: count={self.ram_counter} '
-                    f'front={self.front_min_dist:.2f}m size={best.size:.0f} x={best.x:.0f}'
+                    f'RAMMING: phase={self.ram_phase} count={self.ram_counter} '
+                    f'rear={self.rear_min_dist:.2f}m yaw={math.degrees(self.map_yaw):.1f}°'
+                )
+            else:
+                self.get_logger().info(
+                    f'RAMMING: phase={self.ram_phase} count={self.ram_counter} '
+                    f'front={self.front_min_dist:.2f}m yaw={math.degrees(self.map_yaw):.1f}°'
                 )
 
-            # Aggressive turning to keep barrel centered
-            if abs(x_offset) > 150:
-                # Barrel is far to the side - pure rotation, no forward
-                twist.linear.x = 0.0
-                twist.angular.z = 0.8 if x_offset < 0 else -0.8
-            elif abs(x_offset) > 80:
-                # Barrel is off-center - slow forward, strong turn
-                twist.linear.x = 0.1
-                twist.angular.z = 0.5 if x_offset < 0 else -0.5
-            elif abs(x_offset) > 40:
-                # Barrel is slightly off-center
-                twist.linear.x = 0.2
-                twist.angular.z = -0.004 * x_offset
+        # Phase 0: 向前靠近直到足够近 (约1.5个机器人直径)
+        if self.ram_phase == 0:
+            if self.front_min_dist > 0.4:
+                twist.linear.x = 0.1  # 慢速向前
+                twist.angular.z = 0.0
             else:
-                # Barrel is centered - full speed ahead!
-                twist.linear.x = 0.26
-                twist.angular.z = -0.003 * x_offset
-        else:
-            # Lost sight of barrel during ramming - likely passed through it!
-            self.lost_sight_counter += 1
-
-            if self.ram_counter % 10 == 0:
-                self.get_logger().info(
-                    f'RAMMING (blind): count={self.ram_counter} '
-                    f'front={self.front_min_dist:.2f}m lost={self.lost_sight_counter}'
-                )
-
-            # If front is blocked (wall or we passed through barrel), keep trying pickup
-            # The barrel might be behind us now - give more time for pickup to succeed
-            if self.front_min_dist < 0.3:
-                # Wall or obstacle ahead - stop and wait for pickup result
+                self.get_logger().info(f'Close enough (front={self.front_min_dist:.2f}m), stopping')
+                self.ram_phase = 1
+                self.ram_counter = 0
                 twist.linear.x = 0.0
                 twist.angular.z = 0.0
-                # Give extra time when stopped (barrel likely behind us)
-                if self.lost_sight_counter > 100:  # 10 seconds
-                    self.get_logger().warn('Lost barrel during ramming (blocked), back to search')
-                    self.stop_robot()
-                    self.state = State.SEARCHING
-                    return
-            else:
-                # Front is clear but can't see barrel - keep moving forward briefly
-                twist.linear.x = 0.15
-                twist.angular.z = 0.0
-                # Shorter timeout when moving forward blind
-                if self.lost_sight_counter > 30:  # 3 seconds
-                    self.get_logger().warn('Lost barrel during ramming (clear path), back to search')
-                    self.stop_robot()
-                    self.state = State.SEARCHING
-                    return
+
+        # Phase 1: 刹停 (确保速度完全为0)
+        elif self.ram_phase == 1:
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            if self.ram_counter >= 10:  # 刹停1秒确保完全停止
+                self.get_logger().info('Stopped, start turning 180°')
+                self.ram_phase = 2
+                self.turn_counter = 0
+
+        # Phase 2: 旋转180度 (基于角度检测，不是时间)
+        elif self.ram_phase == 2:
+            self.turn_counter += 1
+            twist.linear.x = 0.0
+            twist.angular.z = 0.8  # 左转 (逆时针)
+
+            # 记录起始角度（第一次进入时）
+            if not hasattr(self, 'ram_start_yaw'):
+                self.ram_start_yaw = self.map_yaw
+                self.get_logger().info(f'RAMMING: Start rotation, initial yaw={math.degrees(self.ram_start_yaw):.1f}°')
+
+            # 计算已旋转角度
+            yaw_diff = self.map_yaw - self.ram_start_yaw
+            # 归一化到 -π 到 π
+            while yaw_diff > math.pi:
+                yaw_diff -= 2 * math.pi
+            while yaw_diff < -math.pi:
+                yaw_diff += 2 * math.pi
+            rotated_deg = abs(math.degrees(yaw_diff))
+
+            # 每10个tick记录一次旋转进度
+            if self.turn_counter % 10 == 0:
+                self.get_logger().info(f'RAMMING: Rotating... rotated={rotated_deg:.1f}° yaw={math.degrees(self.map_yaw):.1f}°')
+
+            # 检查是否旋转了约180度
+            if rotated_deg > 170:  # 接近180度
+                self.get_logger().info(f'Finished turning 180°, rotated={rotated_deg:.1f}° final yaw={math.degrees(self.map_yaw):.1f}°')
+                # 转完180度后，桶在后方，切换mask从front到rear
+                self.set_lidar_mask('rear')
+                del self.ram_start_yaw  # 清除起始角度
+                self.ram_phase = 3
+                self.ram_counter = 0  # 重置计数器用于刹停阶段
+
+        # Phase 3: 刹停 (确保角速度完全为0再倒车)
+        elif self.ram_phase == 3:
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            if self.ram_counter >= 10:  # 刹停1秒确保完全停止
+                self.get_logger().info('Rotation stopped, now backing up to barrel')
+                self.ram_phase = 4
+                self.ram_counter = 0  # 重置计数器
+
+        # Phase 4: 向后倒车 (已旋转180°，桶在背后) 并持续尝试pickup
+        elif self.ram_phase == 4:
+            # 已经旋转180°，现在机器人背对桶
+            # 所以需要倒车(负linear.x)用屁股撞桶
+            twist.linear.x = -0.15  # 倒车撞桶
+            twist.angular.z = 0.0   # 不转向!
+            # 不设超时，持续尝试直到pickup成功
 
         self.cmd_vel_pub.publish(twist)
 
-        # Try pickup asynchronously (don't block!)
-        if not self.service_pending:
+        # Phase 4时持续尝试pickup
+        if self.ram_phase == 4 and not self.service_pending:
             request = ItemRequest.Request()
             request.robot_id = self.robot_name
             self.service_future = self.pickup_client.call_async(request)
             self.service_pending = True
+
+    def _handle_recover_localization(self):
+        """Recover localization after ramming.
+
+        RAMMING involves 180° turn + backup which causes odometry drift.
+        This state spins the robot to let AMCL see room features and correct position.
+
+        Phases:
+        0: Move forward slightly to get away from wall/barrel (15 ticks = 1.5s)
+        1: Spin 360° to let AMCL resample particles (60 ticks = 6s at 0.5 rad/s ≈ 360°)
+        2: Stop and transition to NAVIGATING_TO_GREEN
+        """
+        self.recover_counter += 1
+        twist = Twist()
+
+        # Log progress
+        if self.recover_counter % 10 == 0:
+            self.get_logger().info(
+                f'RECOVER_LOCALIZATION: phase={self.recover_phase} count={self.recover_counter}'
+            )
+
+        # Phase 0: Move forward slightly to get away from obstacles
+        if self.recover_phase == 0:
+            twist.linear.x = 0.1
+            twist.angular.z = 0.0
+
+            if self.recover_counter >= 15:  # 1.5 seconds
+                self.get_logger().info('RECOVER: Forward done, starting 360° spin')
+                self.recover_phase = 1
+                self.recover_counter = 0
+
+        # Phase 1: Spin 360° to let AMCL see room walls
+        elif self.recover_phase == 1:
+            twist.linear.x = 0.0
+            twist.angular.z = 0.5  # Slow spin for better AMCL sampling
+
+            # 360° at 0.5 rad/s = ~12.6 seconds, but 6s is usually enough
+            if self.recover_counter >= 60:  # 6 seconds
+                self.get_logger().info('RECOVER: Spin complete, localization should be fixed')
+                self.recover_phase = 2
+
+        # Phase 2: Stop and transition
+        elif self.recover_phase == 2:
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            self.get_logger().info('RECOVER complete -> NAVIGATING_TO_GREEN')
+            self.state = State.NAVIGATING_TO_GREEN
+
+        self.cmd_vel_pub.publish(twist)
 
     def _handle_nav_to_green(self):
         """Navigate to green zone."""
@@ -808,6 +1119,8 @@ class CleanerBot(Node):
                     self.get_logger().info(f'DELIVERED! Total: {self.collected_count}')
                     self.has_barrel = False
                     self.stop_robot()
+                    # Disable rear LiDAR mask since barrel is gone
+                    self.set_lidar_mask('none')
                     self.state = State.SEARCHING
                 else:
                     # Move forward and retry

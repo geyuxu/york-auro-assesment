@@ -27,3 +27,29 @@ ros2 launch solution solution_launch.py use_nav2:=true
 
 # 终端2: 启动cleaner_bot
 ros2 run solution cleaner_bot --ros-args -p robot_namespace:=robot1
+
+-------
+
+# ROS2 内存/状态清理命令
+
+## 快速清理 (推荐) - 必须按顺序执行！
+pkill -9 gzserver        # 先杀Gazebo服务器
+pkill -9 gzclient        # 杀Gazebo客户端
+pkill -9 -f ros2         # 杀ROS2进程
+pkill -9 -f nav2         # 杀Nav2
+pkill -9 -f python3      # 杀所有Python (包括cleaner_bot)
+rm -rf /dev/shm/fastrtps_*   # 清理共享内存
+rm -rf /tmp/gazebo*          # 清理Gazebo临时文件
+sleep 2                      # 等待进程完全终止
+ros2 daemon stop && ros2 daemon start
+
+## 状态存储位置说明
+
+| 状态 | 存储位置 | 清理方法 |
+|------|----------|----------|
+| nav_active, has_barrel | Node内存 | 重启node |
+| Nav2 goals | Nav2进程内存 | 重启Nav2或整个launch |
+| TF transforms | TF buffer内存 | 重启 |
+| Gazebo物理状态 (barrel位置) | Gazebo进程 | 重启Gazebo |
+| 共享内存通信 | /dev/shm/fastrtps_* | rm -rf /dev/shm/fastrtps_* |
+| ROS2 daemon缓存 | daemon进程 | ros2 daemon stop && start |
