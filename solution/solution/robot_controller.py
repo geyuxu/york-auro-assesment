@@ -8,7 +8,7 @@ from rclpy.signals import SignalHandlerOptions
 from rclpy.executors import ExternalShutdownException
 from rclpy.action import ActionClient
 
-from geometry_msgs.msg import Twist, PoseStamped
+from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from assessment_interfaces.msg import BarrelList, ZoneList, Barrel, Zone, RadiationList
@@ -105,12 +105,63 @@ class RobotController(Node):
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.nav_goal_handle = None
 
+        # Publisher for initial pose (to set AMCL initial position)
+        # DISABLED: Using AMCL's set_initial_pose parameter instead
+        # self.initial_pose_pub = self.create_publisher(
+        #     PoseWithCovarianceStamped, 'initialpose', 10)
+        # self.initial_pose_timer = self.create_timer(5.0, self._publish_initial_pose)
+        # self.initial_pose_retry_timer = None
+        # self.initial_pose_attempts = 0
+        # self.max_initial_pose_attempts = 20
+
         # Control loop timer
         self.timer_period = 0.1  # 10 Hz
         self.timer = self.create_timer(self.timer_period, self.control_loop)
 
         self.first_time = True
         self.get_logger().info(f"{self.robot_name} initialized and ready!")
+
+    def _publish_initial_pose(self):
+        """Publish initial pose to AMCL for localization, retry if needed"""
+        # Cancel the initial delay timer
+        if self.initial_pose_timer is not None:
+            self.initial_pose_timer.cancel()
+            self.initial_pose_timer = None
+
+        # Check if we've exceeded max attempts
+        self.initial_pose_attempts += 1
+        if self.initial_pose_attempts > self.max_initial_pose_attempts:
+            self.get_logger().warn("Max initial pose attempts reached, giving up")
+            if self.initial_pose_retry_timer is not None:
+                self.initial_pose_retry_timer.cancel()
+            return
+
+        # Convert yaw to quaternion
+        qz = math.sin(self.initial_yaw / 2.0)
+        qw = math.cos(self.initial_yaw / 2.0)
+
+        msg = PoseWithCovarianceStamped()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.pose.position.x = self.initial_x
+        msg.pose.pose.position.y = self.initial_y
+        msg.pose.pose.position.z = 0.0
+        msg.pose.pose.orientation.x = 0.0
+        msg.pose.pose.orientation.y = 0.0
+        msg.pose.pose.orientation.z = qz
+        msg.pose.pose.orientation.w = qw
+
+        # Set covariance (uncertainty)
+        msg.pose.covariance[0] = 0.25  # x variance
+        msg.pose.covariance[7] = 0.25  # y variance
+        msg.pose.covariance[35] = 0.07  # yaw variance
+
+        self.initial_pose_pub.publish(msg)
+        self.get_logger().info(f"Published initial pose (attempt {self.initial_pose_attempts}): x={self.initial_x}, y={self.initial_y}, yaw={self.initial_yaw}")
+
+        # Set up retry timer to keep publishing every 1 second
+        if self.initial_pose_retry_timer is None:
+            self.initial_pose_retry_timer = self.create_timer(1.0, self._publish_initial_pose)
 
     def _generate_search_waypoints(self):
         """Generate search waypoints for exploring the environment"""

@@ -3,9 +3,10 @@ from ament_index_python.packages import get_package_share_directory, get_package
 import yaml
 
 from launch import LaunchDescription, LaunchContext
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction, Shutdown, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction, Shutdown, OpaqueFunction, ExecuteProcess, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.conditions import IfCondition
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node, SetParameter, SetRemap, PushRosNamespace, RosTimer, SetUseSimTime
 
@@ -229,8 +230,8 @@ def generate_launch_description():
     rviz_windows = PathJoinSubstitution([FindPackageShare('assessment'), 'config', 'rviz_windows.yaml'])
     
     # Nav2 parameters. Similarly, can be changed by pointing it to your solution package.
-    map = PathJoinSubstitution([FindPackageShare('solution'), 'config', 'map2.yaml'])
-    params = PathJoinSubstitution([FindPackageShare('assessment'), 'params', 'nav2_params_namespaced.yaml'])
+    map = PathJoinSubstitution([FindPackageShare('solution'), 'maps', 'map.yaml'])
+    params = PathJoinSubstitution([FindPackageShare('solution'), 'params', 'custom_nav2_params_namespaced.yaml'])
     
     assessment_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -251,7 +252,7 @@ def generate_launch_description():
                           'random_seed': random_seed,
                           'use_nav2': use_nav2,
                           'map': map,
-                          'params_files': params,
+                          'params_file': params,
                           'headless': headless,
                           'obstacles': obstacles,
                           'limit_real_time_factor': limit_real_time_factor,
@@ -311,6 +312,33 @@ def generate_launch_description():
     ld.add_action(assessment_cmd)
     ld.add_action(robot_controller_cmd)
     ld.add_action(data_logger_cmd)
-    ld.add_action(timeout_cmd)    
+    ld.add_action(timeout_cmd)
+
+    # Auto-activate AMCL after a delay (only when use_nav2 is True)
+    # This is needed because lifecycle manager sometimes fails to auto-activate AMCL
+    activate_amcl_cmd = TimerAction(
+        period=8.0,  # Wait 8 seconds for everything to start
+        actions=[
+            ExecuteProcess(
+                cmd=['ros2', 'lifecycle', 'set', '/robot1/amcl', 'configure'],
+                output='screen'
+            ),
+        ],
+        condition=IfCondition(use_nav2)
+    )
+
+    activate_amcl_cmd2 = TimerAction(
+        period=10.0,  # Wait another 2 seconds then activate
+        actions=[
+            ExecuteProcess(
+                cmd=['ros2', 'lifecycle', 'set', '/robot1/amcl', 'activate'],
+                output='screen'
+            ),
+        ],
+        condition=IfCondition(use_nav2)
+    )
+
+    ld.add_action(activate_amcl_cmd)
+    ld.add_action(activate_amcl_cmd2)
 
     return ld
