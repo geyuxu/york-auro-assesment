@@ -1,0 +1,686 @@
+nohup: ignoring input
+[INFO] [launch]: All log files can be found below /home/ubuntu/.ros/log/2025-12-31-06-40-41-095246-5987bbf8f6c7-74432
+[INFO] [launch]: Default logging verbosity is set to INFO
+[37;1m2025-12-31 06:40:41.411 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+pose: /workspaces/AURO2025/install/assessment/share/assessment/config/initial_poses.yaml
+[INFO] [launch.user]: Launching namespace=robot1 init_pose={'x': 0.0, 'y': -2.0, 'yaw': 1.6}
+[INFO] [gzserver-1]: process started with pid [74479]
+[INFO] [gzclient-2]: process started with pid [74481]
+[INFO] [barrel_manager.py-3]: process started with pid [74483]
+[INFO] [rviz2-4]: process started with pid [74485]
+[INFO] [robot_state_publisher-5]: process started with pid [74487]
+[INFO] [spawn_entity.py-6]: process started with pid [74489]
+[INFO] [component_container_isolated-7]: process started with pid [74491]
+[INFO] [visual_sensor-8]: process started with pid [74493]
+[INFO] [dynamic_mask.py-9]: process started with pid [74495]
+[INFO] [cleaner_bot-10]: process started with pid [74497]
+[component_container_isolated-7] [37;1m2025-12-31 06:40:42.504 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[robot_state_publisher-5] [37;1m2025-12-31 06:40:42.505 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[rviz2-4] QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-ubuntu'
+[robot_state_publisher-5] [INFO] [1767163242.542283100] [robot1.robot_state_publisher]: got segment base_footprint
+[robot_state_publisher-5] [INFO] [1767163242.542371790] [robot1.robot_state_publisher]: got segment base_link
+[robot_state_publisher-5] [INFO] [1767163242.542375830] [robot1.robot_state_publisher]: got segment base_scan
+[robot_state_publisher-5] [INFO] [1767163242.542377798] [robot1.robot_state_publisher]: got segment camera_link
+[robot_state_publisher-5] [INFO] [1767163242.542379769] [robot1.robot_state_publisher]: got segment camera_rgb_frame
+[robot_state_publisher-5] [INFO] [1767163242.542381628] [robot1.robot_state_publisher]: got segment camera_rgb_optical_frame
+[robot_state_publisher-5] [INFO] [1767163242.542383578] [robot1.robot_state_publisher]: got segment caster_back_left_link
+[robot_state_publisher-5] [INFO] [1767163242.542385423] [robot1.robot_state_publisher]: got segment caster_back_right_link
+[robot_state_publisher-5] [INFO] [1767163242.542387128] [robot1.robot_state_publisher]: got segment imu_link
+[robot_state_publisher-5] [INFO] [1767163242.542389017] [robot1.robot_state_publisher]: got segment wheel_left_link
+[robot_state_publisher-5] [INFO] [1767163242.542390649] [robot1.robot_state_publisher]: got segment wheel_right_link
+[rviz2-4] [37;1m2025-12-31 06:40:42.548 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[visual_sensor-8] [37;1m2025-12-31 06:40:42.567 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/map_server' in container 'robot1/nav2_container'
+[dynamic_mask.py-9] [37;1m2025-12-31 06:40:42.641 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/amcl' in container 'robot1/nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/lifecycle_manager_localization' in container 'robot1/nav2_container'
+[barrel_manager.py-3] [37;1m2025-12-31 06:40:42.691 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[gzserver-1] [37;1m2025-12-31 06:40:42.691 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[spawn_entity.py-6] [37;1m2025-12-31 06:40:42.695 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[barrel_manager.py-3] [INFO] [1767163242.731498486] [barrel_manager]: Loaded and configured barrel models: '<Element 'name' at 0x7f5d821e3ce0>'
+[cleaner_bot-10] [37;1m2025-12-31 06:40:42.741 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[component_container_isolated-7] [WARN] [1767163242.744814665] [robot1.amcl]: New subscription discovered on topic '/robot1/particle_cloud', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY_QOS_POLICY
+[spawn_entity.py-6] [INFO] [1767163242.745019020] [robot1.spawn_entity]: Spawn Entity started
+[spawn_entity.py-6] [INFO] [1767163242.749402025] [robot1.spawn_entity]: Waiting for entity ready before proceeding.
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/controller_server' in container 'robot1/nav2_container'
+[cleaner_bot-10] [INFO] [1767163242.772433295] [robot1.cleaner_bot]: Cleaner Bot (SIMPLE) starting for robot1
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/smoother_server' in container 'robot1/nav2_container'
+[cleaner_bot-10] [INFO] [1767163242.792190784] [robot1.cleaner_bot]: Waiting for services...
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/planner_server' in container 'robot1/nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/behavior_server' in container 'robot1/nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/bt_navigator' in container 'robot1/nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/waypoint_follower' in container 'robot1/nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/velocity_smoother' in container 'robot1/nav2_container'
+[INFO] [launch_ros.actions.load_composable_nodes]: Loaded node '/robot1/lifecycle_manager_navigation' in container 'robot1/nav2_container'
+[cleaner_bot-10] [INFO] [1767163243.043902172] [robot1.cleaner_bot]: Services ready!
+[cleaner_bot-10] [INFO] [1767163243.049636684] [robot1.cleaner_bot]: Waiting for Nav2...
+[cleaner_bot-10] [INFO] [1767163243.050017021] [robot1.cleaner_bot]: Nav2 ready!
+[gzserver-1] [INFO] [1767163243.094898103] [gazebo]: Link attacher node initialized.
+[gzserver-1] [INFO] [1767163243.107814780] [gazebo_ros_state]: Publishing states of gazebo models at [/model_states]
+[gzserver-1] [INFO] [1767163243.108088924] [gazebo_ros_state]: Publishing states of gazebo links at [/link_states]
+[rviz2-4] [ERROR] [1767163243.308702126] [rviz2]: Vertex Program:rviz/glsl120/indexed_8bit_image.vert Fragment Program:rviz/glsl120/indexed_8bit_image.frag GLSL link result : 
+[rviz2-4] active samplers with a different type refer to the same texture image unit
+[barrel_manager.py-3] [INFO] [1767163243.744772814] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-1.95, y=3.24)
+[barrel_manager.py-3] [INFO] [1767163243.744976706] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-2.55, y=4.11)
+[barrel_manager.py-3] [INFO] [1767163243.745106015] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-2.29, y=4.970000000000001)
+[barrel_manager.py-3] [INFO] [1767163243.745234477] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-1.37, y=3.74)
+[barrel_manager.py-3] [INFO] [1767163243.745364306] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-2.38, y=3.2900000000000005)
+[barrel_manager.py-3] [INFO] [1767163243.745492584] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-2.08, y=3.7500000000000004)
+[barrel_manager.py-3] [INFO] [1767163243.745623788] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-2.19, y=4.5600000000000005)
+[barrel_manager.py-3] [INFO] [1767163243.745739217] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-1.26, y=4.760000000000001)
+[barrel_manager.py-3] [INFO] [1767163243.745868338] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-1.48, y=3.3500000000000005)
+[barrel_manager.py-3] [INFO] [1767163243.746006221] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-1.72, y=4.5200000000000005)
+[barrel_manager.py-3] [INFO] [1767163243.746115916] [barrel_manager]: Generating clusters...
+[barrel_manager.py-3] [INFO] [1767163243.746259306] [barrel_manager]: Generating cluster id: 1
+[barrel_manager.py-3] [INFO] [1767163243.746513114] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-14.68, y=4.23)
+[barrel_manager.py-3] [INFO] [1767163243.746643857] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-15.15, y=5.9399999999999995)
+[barrel_manager.py-3] [INFO] [1767163243.746759836] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-12.21, y=5.42)
+[barrel_manager.py-3] [INFO] [1767163243.746873760] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-13.28, y=6.67)
+[barrel_manager.py-3] [INFO] [1767163243.746992598] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-13.63, y=3.88)
+[barrel_manager.py-3] [INFO] [1767163243.747100942] [barrel_manager]: Generating cluster id: 2
+[barrel_manager.py-3] [INFO] [1767163243.747228947] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-8.21, y=3.69)
+[barrel_manager.py-3] [INFO] [1767163243.747344166] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-9.33, y=6.01)
+[barrel_manager.py-3] [INFO] [1767163243.747456413] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-10.03, y=5.22)
+[barrel_manager.py-3] [INFO] [1767163243.747570797] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-10.24, y=6.01)
+[barrel_manager.py-3] [INFO] [1767163243.747686500] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-10.74, y=5.33)
+[barrel_manager.py-3] [INFO] [1767163243.747792612] [barrel_manager]: Generating cluster id: 3
+[barrel_manager.py-3] [INFO] [1767163243.747911873] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-12.54, y=10.53)
+[barrel_manager.py-3] [INFO] [1767163243.748062727] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-12.09, y=10.4)
+[barrel_manager.py-3] [INFO] [1767163243.748181529] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-11.93, y=9.97)
+[barrel_manager.py-3] [INFO] [1767163243.748337445] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-11.44, y=9.13)
+[barrel_manager.py-3] [INFO] [1767163243.748459624] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-11.75, y=7.75)
+[barrel_manager.py-3] [INFO] [1767163243.748567297] [barrel_manager]: Generating cluster id: 4
+[barrel_manager.py-3] [INFO] [1767163243.748688318] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-10.73, y=8.89)
+[barrel_manager.py-3] [INFO] [1767163243.748803992] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-11.53, y=10.41)
+[barrel_manager.py-3] [INFO] [1767163243.748916884] [barrel_manager]: Added Barrel(type=BarrelType.CONTAMINATED, x=-11.57, y=9.55)
+[barrel_manager.py-3] [INFO] [1767163243.749035262] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-8.83, y=9.06)
+[barrel_manager.py-3] [INFO] [1767163243.749149594] [barrel_manager]: Added Barrel(type=BarrelType.OTHER, x=-10.41, y=11.03)
+[barrel_manager.py-3] [INFO] [1767163243.749264227] [barrel_manager]: Spawning barrel barrel_0 at x: -1.95, y: 3.24, type: BarrelType.CONTAMINATED
+[barrel_manager.py-3] [INFO] [1767163243.869767486] [barrel_manager]: Spawning barrel barrel_1 at x: -2.55, y: 4.11, type: BarrelType.CONTAMINATED
+[barrel_manager.py-3] [INFO] [1767163244.082556302] [barrel_manager]: Spawning barrel barrel_2 at x: -2.29, y: 4.970000000000001, type: BarrelType.CONTAMINATED
+[barrel_manager.py-3] [INFO] [1767163244.298510599] [barrel_manager]: Spawning barrel barrel_3 at x: -1.37, y: 3.74, type: BarrelType.CONTAMINATED
+[barrel_manager.py-3] [INFO] [1767163244.511116922] [barrel_manager]: Spawning barrel barrel_4 at x: -2.38, y: 3.2900000000000005, type: BarrelType.CONTAMINATED
+[barrel_manager.py-3] [INFO] [1767163244.727287687] [barrel_manager]: Spawning barrel barrel_5 at x: -2.08, y: 3.7500000000000004, type: BarrelType.CONTAMINATED
+[barrel_manager.py-3] [INFO] [1767163244.943273884] [barrel_manager]: Spawning barrel barrel_6 at x: -2.19, y: 4.5600000000000005, type: BarrelType.CONTAMINATED
+[barrel_manager.py-3] [INFO] [1767163245.159547078] [barrel_manager]: Spawning barrel barrel_7 at x: -1.26, y: 4.760000000000001, type: BarrelType.CONTAMINATED
+[barrel_manager.py-3] [INFO] [1767163245.374536965] [barrel_manager]: Spawning barrel barrel_8 at x: -1.48, y: 3.3500000000000005, type: BarrelType.OTHER
+[barrel_manager.py-3] [INFO] [1767163245.590928830] [barrel_manager]: Spawning barrel barrel_9 at x: -1.72, y: 4.5200000000000005, type: BarrelType.OTHER
+[barrel_manager.py-3] [INFO] [1767163245.811418123] [barrel_manager]: Spawning barrel barrel_10 at x: -14.68, y: 4.23, type: BarrelType.OTHER
+[barrel_manager.py-3] [INFO] [1767163246.027382818] [barrel_manager]: Spawning barrel barrel_11 at x: -15.15, y: 5.9399999999999995, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163246.050794708] [robot1.cleaner_bot]: Starting autonomous operation!
+[cleaner_bot-10] [INFO] [1767163246.150841366] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.151339356] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.152380982] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163246.242233639] [barrel_manager]: Spawning barrel barrel_12 at x: -12.21, y: 5.42, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163246.250745765] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.251043486] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.251849379] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163246.350811418] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.351131650] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.353073508] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163246.450848632] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.451225728] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.452709275] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163246.458282896] [barrel_manager]: Spawning barrel barrel_13 at x: -13.28, y: 6.67, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163246.550993532] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.551451207] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.552511912] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163246.650809738] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.651200642] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.653238186] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163246.673650379] [barrel_manager]: Spawning barrel barrel_14 at x: -13.63, y: 3.88, type: BarrelType.OTHER
+[cleaner_bot-10] [INFO] [1767163246.750788827] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.751090780] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.752661695] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163246.850840427] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.851194133] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.852124866] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163246.888094172] [barrel_manager]: Spawning barrel barrel_15 at x: -8.21, y: 3.69, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163246.951638757] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163246.952524063] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163246.953986250] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163247.050977703] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.051368834] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.054512734] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163247.106244825] [barrel_manager]: Spawning barrel barrel_16 at x: -9.33, y: 6.01, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163247.151637877] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.151999690] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.154487182] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163247.250790961] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.251102586] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.252622711] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163247.321861254] [barrel_manager]: Spawning barrel barrel_17 at x: -10.03, y: 5.22, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163247.350927883] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.351321170] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.352755910] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163247.451479839] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.451790196] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.452866253] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163247.541112487] [barrel_manager]: Spawning barrel barrel_18 at x: -10.24, y: 6.01, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163247.550758666] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.551069024] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.551975315] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163247.650760344] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.651078593] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.652192223] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163247.750762186] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.751089852] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.752446049] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163247.754159813] [barrel_manager]: Spawning barrel barrel_19 at x: -10.74, y: 5.33, type: BarrelType.OTHER
+[cleaner_bot-10] [INFO] [1767163247.789027335] [robot1.cleaner_bot]: Published initial pose (attempt 1): x=0.0, y=-2.0, yaw=1.6
+[cleaner_bot-10] [INFO] [1767163247.850819009] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.851146201] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.852632639] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163247.951523134] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163247.951828706] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163247.953352685] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163247.971129735] [barrel_manager]: Spawning barrel barrel_20 at x: -12.54, y: 10.53, type: BarrelType.OTHER
+[cleaner_bot-10] [INFO] [1767163248.050817190] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.051142131] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.053841022] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163248.151481960] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.151846114] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.152992030] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163248.188407053] [barrel_manager]: Spawning barrel barrel_21 at x: -12.09, y: 10.4, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163248.251546513] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.251977880] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.253023094] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163248.350748075] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.351060451] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.351881031] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163248.404677273] [barrel_manager]: Spawning barrel barrel_22 at x: -11.93, y: 9.97, type: BarrelType.OTHER
+[cleaner_bot-10] [INFO] [1767163248.450849171] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.451203699] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.452554230] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163248.551030438] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.551378145] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.552418544] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163248.622118378] [barrel_manager]: Spawning barrel barrel_23 at x: -11.44, y: 9.13, type: BarrelType.OTHER
+[cleaner_bot-10] [INFO] [1767163248.650787717] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.651107029] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.655418630] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163248.751207304] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.751539433] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.753155407] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163248.790096183] [robot1.cleaner_bot]: Published initial pose (attempt 2): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163248.840493447] [barrel_manager]: Spawning barrel barrel_24 at x: -11.75, y: 7.75, type: BarrelType.OTHER
+[cleaner_bot-10] [INFO] [1767163248.850885686] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.851224137] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.852267218] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163248.950798937] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163248.951121301] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163248.952166061] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163249.051584023] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.051987379] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.053189090] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163249.063679594] [barrel_manager]: Spawning barrel barrel_25 at x: -10.73, y: 8.89, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163249.150781888] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.151106297] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.152205633] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163249.250900872] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.251410740] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.252449064] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163249.279249737] [barrel_manager]: Spawning barrel barrel_26 at x: -11.53, y: 10.41, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163249.350864638] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.351176084] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.351943957] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163249.450935377] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.451295818] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.452282845] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163249.496571459] [barrel_manager]: Spawning barrel barrel_27 at x: -11.57, y: 9.55, type: BarrelType.CONTAMINATED
+[cleaner_bot-10] [INFO] [1767163249.550911924] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.551364333] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.553252681] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163249.650924957] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.651277701] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.652256371] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163249.716751925] [barrel_manager]: Spawning barrel barrel_28 at x: -8.83, y: 9.06, type: BarrelType.OTHER
+[cleaner_bot-10] [INFO] [1767163249.750852285] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.751186468] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.752206435] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163249.790168151] [robot1.cleaner_bot]: Published initial pose (attempt 3): x=0.0, y=-2.0, yaw=1.6
+[cleaner_bot-10] [INFO] [1767163249.850892895] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.851275486] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.852306925] [robot1.cleaner_bot]: Nav goal rejected!
+[barrel_manager.py-3] [INFO] [1767163249.937785550] [barrel_manager]: Spawning barrel barrel_29 at x: -10.41, y: 11.03, type: BarrelType.OTHER
+[cleaner_bot-10] [INFO] [1767163249.950900437] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163249.951255608] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163249.952618264] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163250.050830983] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.051180099] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.052090780] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163250.151481552] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.151831736] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.152931261] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163250.251103102] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.251539910] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.253529462] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163250.350859107] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.351205002] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.352115936] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163250.450895237] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.451358590] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.452413299] [robot1.cleaner_bot]: Nav goal rejected!
+[INFO] [ros2-11]: process started with pid [75103]
+[cleaner_bot-10] [INFO] [1767163250.550905832] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.551290206] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.552586348] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163250.651942419] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.652350648] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.653513686] [robot1.cleaner_bot]: Nav goal rejected!
+[spawn_entity.py-6] [INFO] [1767163250.696038424] [robot1.spawn_entity]: Loading entity XML from file /workspaces/AURO2025/install/assessment/share/assessment/models/robot.sdf
+[spawn_entity.py-6] [INFO] [1767163250.696865287] [robot1.spawn_entity]: Waiting for service /spawn_entity, timeout = 30
+[spawn_entity.py-6] [INFO] [1767163250.697064094] [robot1.spawn_entity]: Waiting for service /spawn_entity
+[spawn_entity.py-6] [INFO] [1767163250.700058249] [robot1.spawn_entity]: Calling service /spawn_entity
+[ros2-11] [37;1m2025-12-31 06:40:50.704 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[cleaner_bot-10] [INFO] [1767163250.750707827] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.751716667] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.753305913] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163250.790211951] [robot1.cleaner_bot]: Published initial pose (attempt 4): x=0.0, y=-2.0, yaw=1.6
+[gzserver-1] [INFO] [1767163250.840338723] [robot1.turtlebot3_imu]: <initial_orientation_as_reference> is unset, using default value of false to comply with REP 145 (world as orientation reference)
+[cleaner_bot-10] [INFO] [1767163250.851054231] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.851415139] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.852656389] [robot1.cleaner_bot]: Nav goal rejected!
+[spawn_entity.py-6] [INFO] [1767163250.887815822] [robot1.spawn_entity]: Spawn status: SpawnEntity: Successfully spawned entity [robot1]
+[cleaner_bot-10] [INFO] [1767163250.950920803] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163250.951439757] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163250.954625679] [robot1.cleaner_bot]: Nav goal rejected!
+[INFO] [spawn_entity.py-6]: process has finished cleanly [pid 74489]
+[cleaner_bot-10] [INFO] [1767163251.050707422] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163251.051042032] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163251.053669822] [robot1.cleaner_bot]: Nav goal rejected!
+[gzserver-1] [INFO] [1767163251.100874393] [robot1.camera_driver]: Publishing camera info to [/robot1/camera/camera_info]
+[cleaner_bot-10] [INFO] [1767163251.150886006] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163251.151248791] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163251.152144299] [robot1.cleaner_bot]: Nav goal rejected!
+[gzserver-1] [INFO] [1767163251.212141852] [robot1.turtlebot3_diff_drive]: Wheel pair 1 separation set to [0.287000m]
+[gzserver-1] [INFO] [1767163251.212195478] [robot1.turtlebot3_diff_drive]: Wheel pair 1 diameter set to [0.066000m]
+[gzserver-1] [INFO] [1767163251.213244876] [robot1.turtlebot3_diff_drive]: Subscribed to [/robot1/cmd_vel]
+[gzserver-1] [INFO] [1767163251.215287827] [robot1.turtlebot3_diff_drive]: Advertise odometry on [/robot1/odom]
+[gzserver-1] [INFO] [1767163251.218370010] [robot1.turtlebot3_diff_drive]: Publishing odom transforms between [odom] and [base_footprint]
+[gzserver-1] [INFO] [1767163251.229381051] [robot1.turtlebot3_joint_state]: Going to publish joint [wheel_left_joint]
+[gzserver-1] [INFO] [1767163251.229438340] [robot1.turtlebot3_joint_state]: Going to publish joint [wheel_right_joint]
+[cleaner_bot-10] [INFO] [1767163251.250908001] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163251.251327389] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163251.252484551] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163251.351970822] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163251.355745383] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[cleaner_bot-10] [WARN] [1767163251.357723808] [robot1.cleaner_bot]: Nav goal rejected!
+[cleaner_bot-10] [INFO] [1767163251.450851186] [robot1.cleaner_bot]: BARREL HUGE! size=3853 -> RAMMING directly
+[barrel_manager.py-3] [INFO] [1767163251.552399708] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[ros2-11] [37;1m2025-12-31 06:40:51.577 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[barrel_manager.py-3] [INFO] [1767163251.651884794] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163251.752241256] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[cleaner_bot-10] [INFO] [1767163251.790389716] [robot1.cleaner_bot]: Published initial pose (attempt 5): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163251.852648374] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163251.952286702] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163252.052121827] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163252.151835640] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163252.252351030] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163252.351568906] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163252.454550989] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[INFO] [ros2-12]: process started with pid [75195]
+[barrel_manager.py-3] [INFO] [1767163252.553227795] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163252.652600280] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[ros2-12] [37;1m2025-12-31 06:40:52.738 [31;1m[[37;1mRTPS_TRANSPORT_SHM[31;1m Error] [37mFailed init_port fastrtps_port7413: open_and_lock_file failed[34;1m -> Function [36mopen_port_internal[m
+[barrel_manager.py-3] [INFO] [1767163252.751483426] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[cleaner_bot-10] [INFO] [1767163252.792363530] [robot1.cleaner_bot]: Published initial pose (attempt 6): x=0.0, y=-2.0, yaw=1.6
+[component_container_isolated-7] [WARN] [1767163252.792559850] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163252.791798 but the latest data is at time 3.316000, when looking up transform from frame [odom] to frame [base_footprint])
+[barrel_manager.py-3] [INFO] [1767163253.051562568] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163253.054010416] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163253.055730813] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[ros2-11] Unknown transition requested, available ones are:
+[ros2-11] - deactivate [4]
+[ros2-11] - shutdown [7]
+[barrel_manager.py-3] [INFO] [1767163253.152431087] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[ERROR] [ros2-11]: process has died [pid 75103, exit code 1, cmd 'ros2 lifecycle set /robot1/amcl configure'].
+[barrel_manager.py-3] [INFO] [1767163253.252310768] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163253.351855555] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163253.452692479] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163253.552910363] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163253.653912819] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163253.751791788] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163253.789865133] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163253.789582 but the latest data is at time 3.452000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163253.790022493] [robot1.cleaner_bot]: Published initial pose (attempt 7): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163253.851941071] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163253.953894578] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163254.052745513] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[ros2-12] Unknown transition requested, available ones are:
+[ros2-12] - deactivate [4]
+[ros2-12] - shutdown [7]
+[barrel_manager.py-3] [INFO] [1767163254.152155165] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163254.252349394] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[ERROR] [ros2-12]: process has died [pid 75195, exit code 1, cmd 'ros2 lifecycle set /robot1/amcl activate'].
+[barrel_manager.py-3] [INFO] [1767163254.351988803] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163254.451982969] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163254.552384836] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163254.652353535] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163254.751310956] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163254.789846472] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163254.789592 but the latest data is at time 3.622000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163254.790015974] [robot1.cleaner_bot]: Published initial pose (attempt 8): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163254.852209730] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163254.952427964] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.052119656] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.152046280] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.253144256] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.352490681] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.452086320] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.551850714] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.652570416] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.751769427] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163255.789754272] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163255.789433 but the latest data is at time 3.792000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163255.789851277] [robot1.cleaner_bot]: Published initial pose (attempt 9): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163255.853271556] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163255.953587972] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163256.052132454] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163256.154892791] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163256.252662834] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163256.352503916] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163256.453312498] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[cleaner_bot-10] [WARN] [1767163256.552308790] [robot1.cleaner_bot]: Ram timeout, back to search
+[cleaner_bot-10] [INFO] [1767163256.651695044] [robot1.cleaner_bot]: [CALIBRATION_SEARCH] size=1928 dist=0.9826
+[cleaner_bot-10] [INFO] [1767163256.651927207] [robot1.cleaner_bot]: BARREL ALIGNED! x=255 size=1928 -> APPROACHING
+[component_container_isolated-7] [WARN] [1767163256.790938397] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163256.790490 but the latest data is at time 3.928000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163256.791187682] [robot1.cleaner_bot]: Published initial pose (attempt 10): x=0.0, y=-2.0, yaw=1.6
+[cleaner_bot-10] [INFO] [1767163256.952127251] [robot1.cleaner_bot]: BARREL CLOSE! size=3402 -> RAMMING
+[barrel_manager.py-3] [INFO] [1767163257.054208475] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163257.152704013] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163257.252537135] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163257.352788008] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163257.452916641] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163257.552678667] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163257.655042109] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163257.752659917] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163257.790896679] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the past.  Requested time 4.100000 but the earliest data is at time 4.313000, when looking up transform from frame [base_footprint] to frame [odom])
+[cleaner_bot-10] [INFO] [1767163257.791112121] [robot1.cleaner_bot]: Published initial pose (attempt 11): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163257.852722080] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163257.952393819] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.052706106] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.152886264] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.253191668] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.352917333] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.453226803] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.553235006] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.653872014] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.752715714] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163258.790781206] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163258.790440 but the latest data is at time 4.608000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163258.790915231] [robot1.cleaner_bot]: Published initial pose (attempt 12): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163258.853568361] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163258.952698904] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.055287333] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.151937989] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.254121122] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.352634597] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.453772706] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.552682939] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.652724241] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.753595505] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163259.790631110] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163259.790387 but the latest data is at time 5.118000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163259.790825290] [robot1.cleaner_bot]: Published initial pose (attempt 13): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163259.853247715] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163259.952738207] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.054342272] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.153878634] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.253335674] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.352596641] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.453821995] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.553189466] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.652917177] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.753459777] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163260.791868141] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163260.791636 but the latest data is at time 5.628000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163260.792080509] [robot1.cleaner_bot]: Published initial pose (attempt 14): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163260.853031889] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163260.954308061] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.054418119] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.152755406] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.252692903] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.352625161] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.454390126] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.556036413] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.652660154] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.752192168] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[cleaner_bot-10] [INFO] [1767163261.790660506] [robot1.cleaner_bot]: Published initial pose (attempt 15): x=0.0, y=-2.0, yaw=1.6
+[component_container_isolated-7] [WARN] [1767163261.791216944] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163261.790249 but the latest data is at time 6.138000, when looking up transform from frame [odom] to frame [base_footprint])
+[barrel_manager.py-3] [INFO] [1767163261.852032474] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163261.952904647] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[cleaner_bot-10] [WARN] [1767163262.051692360] [robot1.cleaner_bot]: Ram timeout, back to search
+[cleaner_bot-10] [INFO] [1767163262.151668686] [robot1.cleaner_bot]: [CALIBRATION_SEARCH] size=1965 dist=0.5120
+[cleaner_bot-10] [INFO] [1767163262.151877949] [robot1.cleaner_bot]: BARREL ALIGNED! x=298 size=1965 -> APPROACHING
+[cleaner_bot-10] [INFO] [1767163262.251481264] [robot1.cleaner_bot]: [CALIBRATION] size=1984 dist=0.5120
+[cleaner_bot-10] [INFO] [1767163262.351659555] [robot1.cleaner_bot]: [CALIBRATION] size=1984 dist=0.5120
+[cleaner_bot-10] [INFO] [1767163262.451502858] [robot1.cleaner_bot]: [CALIBRATION] size=2168 dist=0.5120
+[cleaner_bot-10] [INFO] [1767163262.552526898] [robot1.cleaner_bot]: BARREL CLOSE! size=3781 -> RAMMING
+[barrel_manager.py-3] [INFO] [1767163262.652509912] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163262.755385784] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163262.790170367] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163262.789845 but the latest data is at time 6.648000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163262.790450063] [robot1.cleaner_bot]: Published initial pose (attempt 16): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163262.852407502] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163262.955742541] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.052845865] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.153734318] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.252850083] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.353427224] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.452964635] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.552149421] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.652911609] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.753904267] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163263.790586004] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163263.790358 but the latest data is at time 7.124000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163263.790826518] [robot1.cleaner_bot]: Published initial pose (attempt 17): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163263.856760846] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163263.954802143] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.052337182] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.152835733] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.252659638] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.354417316] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.452817983] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.552735293] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.652940799] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.752027687] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163264.790705330] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163264.790445 but the latest data is at time 7.634000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163264.790909386] [robot1.cleaner_bot]: Published initial pose (attempt 18): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163264.854882816] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163264.953058864] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.052587457] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.154341514] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.253918437] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.353037494] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.452863711] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.552756001] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.653120058] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.752407422] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163265.790842492] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163265.790483 but the latest data is at time 8.144000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163265.791037492] [robot1.cleaner_bot]: Published initial pose (attempt 19): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163265.852899808] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163265.952630385] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.054031638] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.152892404] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.253480637] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.352435181] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.454908832] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.552231889] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.652797787] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.751922574] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[component_container_isolated-7] [WARN] [1767163266.790890659] [robot1.amcl]: Failed to transform initial pose in time (Lookup would require extrapolation into the future.  Requested time 1767163266.790497 but the latest data is at time 8.654000, when looking up transform from frame [odom] to frame [base_footprint])
+[cleaner_bot-10] [INFO] [1767163266.791111854] [robot1.cleaner_bot]: Published initial pose (attempt 20): x=0.0, y=-2.0, yaw=1.6
+[barrel_manager.py-3] [INFO] [1767163266.852267458] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163266.952958501] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163267.052848195] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163267.153184553] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163267.253646616] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163267.352559694] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163267.453645270] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163267.552608531] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[cleaner_bot-10] [WARN] [1767163267.651766584] [robot1.cleaner_bot]: Ram timeout, back to search
+[cleaner_bot-10] [INFO] [1767163267.751689504] [robot1.cleaner_bot]: BARREL HUGE! size=5958 -> RAMMING directly
+[cleaner_bot-10] [WARN] [1767163267.790624468] [robot1.cleaner_bot]: Max initial pose attempts reached, giving up
+[barrel_manager.py-3] [INFO] [1767163267.853127177] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163267.952598419] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.053312736] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.152718155] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.258869975] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.352585514] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.452300424] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.553961727] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.652983647] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.752441341] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.851487845] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163268.953067391] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.054518395] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.152585294] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.252985617] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.352869432] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.452494985] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.556259103] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.651928419] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.752638850] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.852594854] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163269.953415145] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.053090579] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.154525704] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.252626922] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.352520000] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.452651683] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.552765356] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.654113456] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.752080048] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.852552033] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163270.952325165] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.052257389] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.152763488] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.252809158] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.353003837] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.455436794] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.552881367] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.654053057] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.752077410] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.853341029] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163271.953343438] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163272.052501629] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163272.153331531] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163272.252642672] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163272.352416378] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163272.453230279] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163272.552799392] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163272.653165446] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[barrel_manager.py-3] [INFO] [1767163272.753129303] [barrel_manager]: Incoming request on pick_up_item from robot_id 'robot1'
+[cleaner_bot-10] [WARN] [1767163272.851386505] [robot1.cleaner_bot]: Ram timeout, back to search
+[cleaner_bot-10] [INFO] [1767163272.951582283] [robot1.cleaner_bot]: Waypoint 1/12: (2, 3)
+[cleaner_bot-10] [INFO] [1767163272.951898711] [robot1.cleaner_bot]: Nav goal: (2.0, 3.0)
+[component_container_isolated-7] [WARN] [1767163272.954836059] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163272.954887597] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163272.954895694] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163273.315447699] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163273.315498698] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163273.315507973] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163274.314768221] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163274.314821383] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163274.314830472] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163275.315772153] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163275.315835765] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163275.315847048] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163278.764485871] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163278.764534106] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163278.764540734] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163279.314762080] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163279.314823748] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163279.314834890] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163289.253906896] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163289.253957644] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163289.253965940] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163289.314452752] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163289.314516113] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163289.314527840] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163301.453659296] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163301.453705887] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163301.453713231] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163302.314368726] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163302.314418297] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163302.314426618] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163303.315422714] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163303.315473653] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163303.315502962] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163304.315030061] [robot1.planner_server]: GridBased: failed to create plan with tolerance 0.50.
+[component_container_isolated-7] [WARN] [1767163304.315083910] [robot1.planner_server]: Planning algorithm GridBased failed to generate a valid path to (2.00, 3.00)
+[component_container_isolated-7] [WARN] [1767163304.315093801] [robot1.planner_server]: [compute_path_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163307.784193907] [robot1.controller_server]: No goal checker was specified in parameter 'current_goal_checker'. Server will use only plugin loaded general_goal_checker . This warning will appear once.
+[component_container_isolated-7] [WARN] [1767163314.955419098] [robot1.planner_server]: Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 10.0000 Hz
+[component_container_isolated-7] [ERROR] [1767163327.736370458] [robot1.controller_server]: Failed to make progress
+[component_container_isolated-7] [WARN] [1767163327.736470217] [robot1.controller_server]: [follow_path] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163328.037477212] [robot1.controller_server]: Control loop missed its desired rate of 20.0000Hz
+[component_container_isolated-7] [WARN] [1767163332.325264622] [rcl.logging_rosout]: Publisher already registered for provided node name. If this is due to multiple nodes with the same name then all logs for that logger name will go out over the existing publisher. As soon as any node with that name is destructed it will unregister the publisher, preventing any further logs for that name from being published on the rosout topic.
+[component_container_isolated-7] [WARN] [1767163332.355728412] [rcl.logging_rosout]: Publisher already registered for provided node name. If this is due to multiple nodes with the same name then all logs for that logger name will go out over the existing publisher. As soon as any node with that name is destructed it will unregister the publisher, preventing any further logs for that name from being published on the rosout topic.
+[component_container_isolated-7] [WARN] [1767163332.700466480] [rcl.logging_rosout]: Publisher already registered for provided node name. If this is due to multiple nodes with the same name then all logs for that logger name will go out over the existing publisher. As soon as any node with that name is destructed it will unregister the publisher, preventing any further logs for that name from being published on the rosout topic.
+[component_container_isolated-7] [WARN] [1767163332.835291963] [robot1.nav2_container.rclcpp]: failed to send response to /robot1/nav2_container/_container/load_node (timeout): client will not receive response, at ./src/rmw_response.cpp:154, at ./src/rcl/service.c:314
+[component_container_isolated-7] [WARN] [1767163335.500539778] [robot1.planner_server]: Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 10.0000 Hz
+[ERROR] [rviz2-4]: process has died [pid 74485, exit code -11, cmd '/opt/ros/humble/lib/rviz2/rviz2 -d /tmp/tmpupc3c_q6 --ros-args --log-level warn --ros-args -r __ns:=/robot1 -r /tf:=tf -r /tf_static:=tf_static'].
+[INFO] [cleaner_bot-10]: sending signal 'SIGINT' to process[cleaner_bot-10]
+[INFO] [dynamic_mask.py-9]: sending signal 'SIGINT' to process[dynamic_mask.py-9]
+[INFO] [visual_sensor-8]: sending signal 'SIGINT' to process[visual_sensor-8]
+[INFO] [component_container_isolated-7]: sending signal 'SIGINT' to process[component_container_isolated-7]
+[INFO] [robot_state_publisher-5]: sending signal 'SIGINT' to process[robot_state_publisher-5]
+[INFO] [barrel_manager.py-3]: sending signal 'SIGINT' to process[barrel_manager.py-3]
+[INFO] [gzclient-2]: sending signal 'SIGINT' to process[gzclient-2]
+[INFO] [gzserver-1]: sending signal 'SIGINT' to process[gzserver-1]
+[cleaner_bot-10] [INFO] [1767163338.706784855] [robot1.cleaner_bot]: Shutting down...
+[cleaner_bot-10] Failed to publish log message to rosout: publisher's context is invalid, at ./src/rcl/publisher.c:389
+[cleaner_bot-10] Traceback (most recent call last):
+[cleaner_bot-10]   File "/workspaces/AURO2025/install/solution/lib/solution/cleaner_bot", line 33, in <module>
+[cleaner_bot-10]     sys.exit(load_entry_point('solution', 'console_scripts', 'cleaner_bot')())
+[cleaner_bot-10]   File "/workspaces/AURO2025/build/solution/solution/cleaner_bot.py", line 883, in main
+[cleaner_bot-10]   File "/workspaces/AURO2025/build/solution/solution/cleaner_bot.py", line 374, in stop_robot
+[cleaner_bot-10]     if self.front_min_dist < 0.3 and self.left_min_dist < 0.3 and self.right_min_dist < 0.3:
+[cleaner_bot-10]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/publisher.py", line 70, in publish
+[cleaner_bot-10]     self.__publisher.publish(msg)
+[cleaner_bot-10] rclpy._rclpy_pybind11.RCLError: Failed to publish: publisher's context is invalid, at ./src/rcl/publisher.c:389
+[dynamic_mask.py-9] Traceback (most recent call last):
+[dynamic_mask.py-9]   File "/workspaces/AURO2025/install/assessment/lib/assessment/dynamic_mask.py", line 54, in <module>
+[dynamic_mask.py-9]     main()
+[dynamic_mask.py-9]   File "/workspaces/AURO2025/install/assessment/lib/assessment/dynamic_mask.py", line 50, in main
+[dynamic_mask.py-9]     rclpy.spin(node)
+[dynamic_mask.py-9]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
+[dynamic_mask.py-9]     executor.spin_once()
+[dynamic_mask.py-9]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 751, in spin_once
+[dynamic_mask.py-9]     self._spin_once_impl(timeout_sec)
+[dynamic_mask.py-9]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 740, in _spin_once_impl
+[dynamic_mask.py-9]     handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
+[dynamic_mask.py-9]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 723, in wait_for_ready_callbacks
+[dynamic_mask.py-9]     return next(self._cb_iter)
+[dynamic_mask.py-9]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 620, in _wait_for_ready_callbacks
+[dynamic_mask.py-9]     wait_set.wait(timeout_nsec)
+[dynamic_mask.py-9] KeyboardInterrupt
+[visual_sensor-8] [INFO] [1767163338.707642188] [rclcpp]: signal_handler(signum=2)
+[robot_state_publisher-5] [INFO] [1767163338.708784330] [rclcpp]: signal_handler(signum=2)
+[ERROR] [dynamic_mask.py-9]: process has died [pid 74495, exit code -2, cmd '/workspaces/AURO2025/install/assessment/lib/assessment/dynamic_mask.py --ros-args -r __ns:=/robot1 -r /tf:=tf -r /tf_static:=tf_static'].
+[component_container_isolated-7] [ERROR] [1767163338.766383200] [robot1.lifecycle_manager_navigation]: CRITICAL FAILURE: SERVER smoother_server IS DOWN after not receiving a heartbeat for 4000 ms. Shutting down related nodes.
+[INFO] [robot_state_publisher-5]: process has finished cleanly [pid 74487]
+[visual_sensor-8] OpenCL not available.
+[INFO] [visual_sensor-8]: process has finished cleanly [pid 74493]
+[INFO] [barrel_manager.py-3]: process has finished cleanly [pid 74483]
+[ERROR] [cleaner_bot-10]: process has died [pid 74497, exit code 1, cmd '/workspaces/AURO2025/install/solution/lib/solution/cleaner_bot --ros-args -r __ns:=/robot1 --params-file /tmp/launch_params_m7sa6nzl -r /tf:=tf -r /tf_static:=tf_static'].
+[INFO] [gzclient-2]: process has finished cleanly [pid 74481]
+[component_container_isolated-7] [WARN] [1767163338.994816454] [robot1.bt_navigator]: [navigate_to_pose] [ActionServer] Requested to deactivate server but goal is still executing. Should check if action server is running before deactivating.
+[component_container_isolated-7] [ERROR] [1767163339.025301340] [robot1.bt_navigator_navigate_to_pose_rclcpp_node]: Failed to get result for follow_path in node halt!
+[component_container_isolated-7] [WARN] [1767163339.025422674] [robot1.bt_navigator]: [navigate_to_pose] [ActionServer] Aborting handle.
+[component_container_isolated-7] [WARN] [1767163339.025490603] [robot1.bt_navigator]: [navigate_to_pose] [ActionServer] Stopping the thread per request.
+[INFO] [gzserver-1]: process has finished cleanly [pid 74479]
+[component_container_isolated-7] [WARN] [1767163339.426828827] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1767163339.426850451] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1767163339.426857143] [robot1.smoother_server]: Unable to start transition 4 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1767163339.427009328] [robot1.lifecycle_manager_navigation]: Failed to change state for node: smoother_server
+[component_container_isolated-7] [WARN] [1767163339.427114006] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1767163339.427150797] [rcl_lifecycle]: No transition matching 4 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1767163339.427154228] [robot1.controller_server]: Unable to start transition 4 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1767163339.427372528] [robot1.lifecycle_manager_navigation]: Failed to change state for node: controller_server
+[component_container_isolated-7] [WARN] [1767163339.533017785] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1767163339.533053901] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1767163339.533057821] [robot1.smoother_server]: Unable to start transition 2 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [WARN] [1767163339.533250395] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [WARN] [1767163339.533260466] [rcl_lifecycle]: No transition matching 2 found for current state unconfigured
+[component_container_isolated-7] [ERROR] [1767163339.533263496] [robot1.controller_server]: Unable to start transition 2 from current state unconfigured: Transition is not registered., at ./src/rcl_lifecycle.c:355
+[component_container_isolated-7] [ERROR] [1767163339.774157632] [robot1.local_costmap.local_costmap]: Failed to finish transition 4. Current state is now: inactive (Could not publish transition: publisher's context is invalid, at ./src/rcl/publisher.c:389, at ./src/rcl_lifecycle.c:368)
+[component_container_isolated-7] [ERROR] [1767163339.774186800] [robot1.controller_server]: Failed to finish transition 4. Current state is now: inactive (Could not publish transition: publisher's context is invalid, at ./src/rcl/publisher.c:389, at ./src/rcl_lifecycle.c:368)
+[ERROR] [component_container_isolated-7]: process[component_container_isolated-7] failed to terminate '5' seconds after receiving 'SIGINT', escalating to 'SIGTERM'
+[INFO] [component_container_isolated-7]: sending signal 'SIGTERM' to process[component_container_isolated-7]
+[ERROR] [component_container_isolated-7]: process[component_container_isolated-7] failed to terminate '10.0' seconds after receiving 'SIGTERM', escalating to 'SIGKILL'
+[INFO] [component_container_isolated-7]: sending signal 'SIGKILL' to process[component_container_isolated-7]
+[ERROR] [component_container_isolated-7]: process has died [pid 74491, exit code -9, cmd '/opt/ros/humble/lib/rclcpp_components/component_container_isolated --ros-args --log-level warn --ros-args -r __node:=nav2_container -r __ns:=/robot1 --params-file /tmp/launch_params_2b0hjpt4 --params-file /tmp/launch_params_l80jeygp -r /tf:=tf -r /tf_static:=tf_static'].
