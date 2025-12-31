@@ -111,20 +111,21 @@ class CleanerBot(Node):
         self.LINEAR_SPEED = 0.18
         self.ANGULAR_SPEED = 0.4
 
-        # Search waypoints (approximate room centers in map coordinates)
+        # Search waypoints - zigzag pattern covering the entire map
+        # Map range: X [1.0, 14.0], Y [-19.0, 15.0]
         self.search_waypoints = [
-            (2.0, 2.0),
-            (6.0, 2.0),
-            (10.0, 2.0),
-            (10.0, 6.0),
-            (6.0, 6.0),
-            (2.0, 6.0),
-            (2.0, 10.0),
-            (6.0, 10.0),
-            (10.0, 10.0),
-            (-2.0, 2.0),
-            (-2.0, 6.0),
-            (-2.0, 10.0),
+            (1.0, 0.0),
+            (14.0, 0.0),
+            (14.0, 6.0),
+            (1.0, 6.0),
+            (1.0, 12.0),
+            (14.0, 12.0),
+            (14.0, -6.0),
+            (1.0, -6.0),
+            (1.0, -12.0),
+            (14.0, -12.0),
+            (14.0, -18.0),
+            (1.0, -18.0),
         ]
 
         # Known zone locations (approximate, will verify with vision)
@@ -410,22 +411,15 @@ class CleanerBot(Node):
             self._handle_decontaminating()
 
     def _handle_searching(self):
-        """Search state: Navigate to waypoints looking for red barrels"""
-        # Check for red barrels while searching
-        red_barrels = self.get_red_barrels()
-        if red_barrels and not self.has_barrel:
-            largest = max(red_barrels, key=lambda b: b.size)
-            if largest.size > self.BARREL_SIZE_DETECT:
-                self.get_logger().info(
-                    f'RED BARREL DETECTED! Size={largest.size:.1f}, x={largest.x}')
-                self.cancel_navigation()
-                self.target_barrel = largest
-                self.state = State.APPROACHING_BARREL
-                return
+        """Search state: Navigate to waypoints (pure patrol for now)"""
+        # TODO: 目标二将添加桶检测逻辑
+        # 当前只做纯巡逻
 
-        # Continue searching via waypoints
+        # Continue patrol via waypoints
         if not self.is_navigation_active():
             waypoint = self.search_waypoints[self.current_waypoint_idx]
+            self.get_logger().info(
+                f'Navigating to waypoint {self.current_waypoint_idx + 1}/{len(self.search_waypoints)}: ({waypoint[0]}, {waypoint[1]})')
             self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
             self.send_nav_goal(waypoint[0], waypoint[1])
 
@@ -455,36 +449,10 @@ class CleanerBot(Node):
 
     def _handle_collecting(self):
         """Collect state: Drive into barrel and call pickup service"""
-        # Drive forward briefly to ensure contact
-        self.move_forward(self.LINEAR_SPEED * 0.5)
-
-        # Check if service call already pending
-        if self.service_pending and self.service_future is not None:
-            if self.service_future.done():
-                try:
-                    result = self.service_future.result()
-                    if result.success:
-                        self.get_logger().info(f'COLLECTED BARREL! Message: {result.message}')
-                        self.has_barrel = True
-                        self.collected_count += 1
-                        self.stop_robot()
-                        self.state = State.NAVIGATING_TO_GREEN
-                    else:
-                        self.get_logger().warn(f'Collection failed: {result.message}')
-                        self.state = State.APPROACHING_BARREL
-                except Exception as e:
-                    self.get_logger().error(f'Service call error: {e}')
-                    self.state = State.SEARCHING
-                self.service_pending = False
-                self.service_future = None
-            return
-
-        # Start service call
-        request = ItemRequest.Request()
-        request.robot_id = self.robot_name
-        self.service_future = self.pickup_client.call_async(request)
-        self.service_pending = True
-        self.get_logger().info(f'Calling pick_up_item for {self.robot_name}...')
+        # TODO: 目标二将实现此功能
+        # 当前只是占位，直接返回搜索状态
+        self.get_logger().info('COLLECTING state - not implemented yet, returning to search')
+        self.state = State.SEARCHING
 
     def _handle_navigating_to_green(self):
         """Navigate to green zone for delivery"""
