@@ -50,6 +50,7 @@ setup(
             'robot_controller = solution.robot_controller:main',
             'data_logger = solution.data_logger:main',
             'llm_mapper = solution.llm_mapper:main',
+            'cleaner_bot = solution.cleaner_bot:main',
         ],
     },
 )
