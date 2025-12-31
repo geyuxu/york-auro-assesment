@@ -172,20 +172,21 @@ class CleanerBot(Node):
 
         # Search waypoints - 手动测量值
         self.search_waypoints = [
-            (2, 3),
-            (9.8, 6.0),
-            (10.0, 6.0),
-            (9.8, 9.0),
-            (9.8, 12.0),
-            (9.8, 15.0),
-            (7, 15.0),
-            (7, 12.0),
-            (7, 10.0),
-            (7, 9.0),
-            (14, 9.0),
-            (14, 15.0),
-            (9.5, -10.0),
-            (9.5, -20.0),
+             (-3.3,-11),(0,-12),(6.75,-11),(14,-11),(12.9,-17),(6,-15)
+            # (2, 2),
+            # (9.8, 6.0),
+            # (10.0, 6.0),
+            # (9.8, 9.0),
+            # (9.8, 12.0),
+            # (9.8, 15.0),
+            # (7, 15.0),
+            # (7, 12.0),
+            # (7, 10.0),
+            # (7, 9.0),
+            # (14, 9.0),
+            # (14, 15.0),
+            # (9.5, -10.0),
+            # (9.5, -20.0),
         ]
 
         # 导航失败计数器
@@ -200,9 +201,11 @@ class CleanerBot(Node):
         self.last_nav_goal_time = None
         self.MIN_NAV_GOAL_INTERVAL = 2.0  # 至少间隔2秒才发送新目标
 
-        # Zone locations (手动测量值)
-        self.cyan_zone_approx = (11.0, -8.8)   # 消毒区 (青色圆圈)
-        self.green_zone_approx = (10.7, 13.4)  # 交付区 (绿色区域)
+        # Zone locations (Gazebo世界坐标，地图已旋转对齐)
+        # self.cyan_zone_approx = (7.5, 9.4)     # 消毒区
+        # self.green_zone_approx = (13.5, 9.4)   # 交付区A
+        self.cyan_zone_approx = (-9, -11)     # 消毒区
+        self.green_zone_approx = (-14, -11)   # 交付区A
 
         # Publishers
         cmd_vel_topic = f'{self.robot_namespace}/cmd_vel'
