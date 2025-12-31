@@ -17,7 +17,7 @@ def generate_launch_description():
     # 参数声明
     declare_map_file = DeclareLaunchArgument(
         'map_file',
-        default_value='/workspaces/AURO2025/solution/saved_maps/map_latest.yaml',
+        default_value='/workspaces/AURO2025/solution/maps/map.yaml',
         description='Path to saved map YAML file'
     )
 
