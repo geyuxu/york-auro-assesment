@@ -1,3 +1,6 @@
+colcon build --symlink-install --packages-select solution 2>&1
+source install/setup.bash
+
 # 终端 1 - 仿真
 ros2 launch assessment assessment.launch.py \
   num_robots:=1 use_nav2:=false headless:=false random_seed:=42

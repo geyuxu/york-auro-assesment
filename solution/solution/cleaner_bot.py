@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Autonomous Cleaner Bot - The Brain of the Robot
+Autonomous Cleaner Bot - SIMPLIFIED VERSION
 
-This node implements a state machine for autonomous barrel collection:
-1. SEARCH: Navigate to waypoints looking for red barrels
-2. APPROACH: Visual servoing to approach detected barrel
-3. COLLECT: Drive into barrel and call pick_up service
-4. DELIVER: Navigate to green zone and offload
-5. DECONTAMINATE: If radiation high, go to cyan zone
+Strategy: Use Nav2 for ALL navigation, including approaching barrels.
+Only use direct cmd_vel for the final "ramming" phase when very close.
 
-Uses Nav2 action client for navigation and direct cmd_vel for fine control.
+State Machine:
+1. SEARCHING: Nav2 patrol waypoints, watch for big red blobs
+2. APPROACHING: Nav2 to barrel location (estimated from camera)
+3. RAMMING: Direct forward motion to drive through barrel
+4. NAVIGATING_TO_GREEN: Nav2 to delivery zone
+5. DELIVERING: Call offload service
 """
 
 import math
@@ -19,23 +20,23 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, QoSPresetProfiles
 from rclpy.action import ActionClient
 from action_msgs.msg import GoalStatus
 
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import LaserScan
 from assessment_interfaces.msg import BarrelList, ZoneList, Barrel, Zone, RadiationList
 from auro_interfaces.srv import ItemRequest
 from nav2_msgs.action import NavigateToPose
 
 
 class State(Enum):
-    """Robot state machine states"""
     IDLE = auto()
     SEARCHING = auto()
-    APPROACHING_BARREL = auto()
-    COLLECTING = auto()
+    APPROACHING = auto()  # Nav2 getting close to barrel
+    RAMMING = auto()      # Direct forward to push through barrel
     NAVIGATING_TO_GREEN = auto()
     DELIVERING = auto()
     NAVIGATING_TO_CYAN = auto()
@@ -43,13 +44,6 @@ class State(Enum):
 
 
 class CleanerBot(Node):
-    """
-    Autonomous cleaner bot that:
-    - Searches for red barrels
-    - Collects them using visual servoing
-    - Delivers to green zone
-    - Decontaminates at cyan zone when needed
-    """
 
     def __init__(self):
         super().__init__('cleaner_bot')
@@ -59,7 +53,7 @@ class CleanerBot(Node):
         self.declare_parameter('robot_namespace', 'robot1')
         self.use_nav2 = self.get_parameter('use_nav2').value
 
-        # Get robot namespace - prefer parameter over node namespace
+        # Get robot namespace
         ns = self.get_namespace()
         if ns and ns != '/':
             self.robot_namespace = ns
@@ -71,7 +65,7 @@ class CleanerBot(Node):
             self.robot_name = 'robot1'
             self.robot_namespace = '/robot1'
 
-        self.get_logger().info(f'Cleaner Bot starting for {self.robot_name}')
+        self.get_logger().info(f'Cleaner Bot (SIMPLE) starting for {self.robot_name}')
 
         # Callback groups
         self.callback_group = ReentrantCallbackGroup()
@@ -79,7 +73,6 @@ class CleanerBot(Node):
 
         # State machine
         self.state = State.IDLE
-        self.previous_state = State.IDLE
 
         # Sensor data
         self.visible_barrels = []
@@ -87,14 +80,16 @@ class CleanerBot(Node):
         self.current_radiation = 0.0
         self.current_pose = None
         self.current_yaw = 0.0
+        self.front_min_dist = 10.0
+        self.left_min_dist = 10.0
+        self.right_min_dist = 10.0
 
         # Task tracking
         self.has_barrel = False
         self.collected_count = 0
-        self.target_barrel = None
         self.current_waypoint_idx = 0
 
-        # Navigation state (non-blocking)
+        # Navigation state
         self.nav_goal_handle = None
         self.nav_result_future = None
         self.nav_active = False
@@ -103,27 +98,30 @@ class CleanerBot(Node):
         self.service_future = None
         self.service_pending = False
 
-        # Thresholds and constants
+        # Simple thresholds
         self.RADIATION_THRESHOLD = 50.0
-        self.BARREL_SIZE_CLOSE = 100.0   # Barrel size when close enough to collect
-        self.BARREL_SIZE_DETECT = 5.0    # Very low: detect barrels as early as possible
-        self.VISUAL_CENTER_THRESHOLD = 20  # Tighter alignment
-        self.LINEAR_SPEED = 0.18
-        self.ANGULAR_SPEED = 0.4
+        self.BARREL_SIZE_START = 500      # Start approaching when barrel this big
+        self.BARREL_SIZE_COMMIT = 3000    # Switch to ramming when barrel this big
+        self.IMAGE_CENTER_X = 320
+        self.LINEAR_SPEED = 0.2
+        self.ANGULAR_SPEED = 0.5
+        self.SCAN_THRESHOLD = 0.35
+        self.SCAN_STOP_THRESHOLD = 0.25
 
-        # Search waypoints - priority areas for barrel search
-        # 1. Left room (top-left big room)
-        # 2. Left vertical corridor (where barrels are shown)
-        # 3. Right area
+        # Approaching state
+        self.approach_counter = 0
+        self.MAX_APPROACH_ATTEMPTS = 100  # 10 seconds at 10Hz
+        self.lost_sight_counter = 0
+
+        # Ramming state
+        self.ram_counter = 0
+        self.MAX_RAM_ATTEMPTS = 50  # 5 seconds at 10Hz
+
+        # Search waypoints - cover the map
         self.search_waypoints = [
-            
-            
-            
-            (2,3),
-            
+            (2, 3),
             (9.8, 6.0),
             (10.0, 6.0),
-
             (9.8, 9.0),
             (9.8, 12.0),
             (9.8, 15.0),
@@ -133,56 +131,51 @@ class CleanerBot(Node):
             (7, 9.0),
             (14, 9.0),
             (14, 15.0),
-
-            (9.5, -10.0),
-            (9.5, -20.0),
-       
         ]
 
-        # Known zone locations (approximate, will verify with vision)
+        # Zone locations
         self.green_zone_approx = (8.0, 8.0)
         self.cyan_zone_approx = (2.0, 8.0)
 
-        # Publishers - use namespaced topic
+        # Publishers
         cmd_vel_topic = f'{self.robot_namespace}/cmd_vel'
         self.cmd_vel_pub = self.create_publisher(Twist, cmd_vel_topic, 10)
-        self.get_logger().info(f'Publishing to: {cmd_vel_topic}')
 
-        # Subscribers - use RELIABLE QoS to match visual_sensor publisher
-        # Use fully qualified topic names with robot namespace
+        # Subscribers
         qos_reliable = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
 
         barrel_topic = f'{self.robot_namespace}/barrels'
         self.barrel_sub = self.create_subscription(
             BarrelList, barrel_topic, self.barrel_callback, qos_reliable,
             callback_group=self.callback_group)
-        self.get_logger().info(f'Subscribing to: {barrel_topic}')
 
         zone_topic = f'{self.robot_namespace}/zones'
         self.zone_sub = self.create_subscription(
             ZoneList, zone_topic, self.zone_callback, qos_reliable,
             callback_group=self.callback_group)
-        self.get_logger().info(f'Subscribing to: {zone_topic}')
 
         odom_topic = f'{self.robot_namespace}/odom'
         self.odom_sub = self.create_subscription(
             Odometry, odom_topic, self.odom_callback, 10,
             callback_group=self.callback_group)
-        self.get_logger().info(f'Subscribing to: {odom_topic}')
 
         self.radiation_sub = self.create_subscription(
             RadiationList, '/radiation_levels', self.radiation_callback, 10,
+            callback_group=self.callback_group)
+
+        scan_topic = f'{self.robot_namespace}/scan'
+        self.scan_sub = self.create_subscription(
+            LaserScan, scan_topic, self.scan_callback,
+            QoSPresetProfiles.SENSOR_DATA.value,
             callback_group=self.callback_group)
 
         # Service clients
         self.pickup_client = self.create_client(
             ItemRequest, '/pick_up_item',
             callback_group=self.service_callback_group)
-
         self.offload_client = self.create_client(
             ItemRequest, '/offload_item',
             callback_group=self.service_callback_group)
-
         self.decontam_client = self.create_client(
             ItemRequest, '/decontaminate',
             callback_group=self.service_callback_group)
@@ -192,132 +185,93 @@ class CleanerBot(Node):
         self.pickup_client.wait_for_service(timeout_sec=30.0)
         self.offload_client.wait_for_service(timeout_sec=30.0)
         self.decontam_client.wait_for_service(timeout_sec=30.0)
-        self.get_logger().info('Services available!')
+        self.get_logger().info('Services ready!')
 
-        # Nav2 action client (non-blocking approach)
+        # Nav2 action client
         nav_action_name = f'{self.robot_namespace}/navigate_to_pose'
-        self.get_logger().info(f'Creating Nav2 action client: {nav_action_name}')
         self.nav_client = ActionClient(
             self, NavigateToPose, nav_action_name,
             callback_group=self.callback_group)
 
-        # Wait for Nav2 action server
         if self.use_nav2:
-            self.get_logger().info('Waiting for Nav2 action server...')
+            self.get_logger().info('Waiting for Nav2...')
             if not self.nav_client.wait_for_server(timeout_sec=30.0):
-                self.get_logger().error('Nav2 action server not available!')
+                self.get_logger().error('Nav2 not available!')
                 self.use_nav2 = False
             else:
-                self.get_logger().info('Nav2 action server is ready!')
+                self.get_logger().info('Nav2 ready!')
 
-        # Control loop timer (10 Hz)
+        # Control timer
         self.control_timer = self.create_timer(
             0.1, self.control_loop, callback_group=self.callback_group)
 
-        # Startup delay to let everything initialize
+        # Startup delay
         self.startup_complete = False
         self.startup_timer = self.create_timer(
             3.0, self._startup_complete, callback_group=self.callback_group)
 
-        self.get_logger().info(f'Cleaner Bot initialized for {self.robot_name}')
-
     def _startup_complete(self):
-        """Called after startup delay"""
         self.startup_timer.cancel()
         self.startup_complete = True
         self.state = State.SEARCHING
-        self.get_logger().info('Startup complete, beginning autonomous operation!')
+        self.get_logger().info('Starting autonomous operation!')
 
     # ==================== CALLBACKS ====================
 
-    def barrel_callback(self, msg: BarrelList):
-        """Process detected barrels from visual sensor"""
+    def barrel_callback(self, msg):
         self.visible_barrels = msg.data
-        # Debug: log when barrels are detected
-        if msg.data:
-            for b in msg.data:
-                self.get_logger().debug(
-                    f'Barrel detected: colour={b.colour}, x={b.x}, y={b.y}, size={b.size}')
 
-    def zone_callback(self, msg: ZoneList):
-        """Process detected zones from visual sensor"""
+    def zone_callback(self, msg):
         self.visible_zones = msg.data
 
-    def odom_callback(self, msg: Odometry):
-        """Update current pose from odometry"""
+    def odom_callback(self, msg):
         self.current_pose = msg.pose.pose
         q = msg.pose.pose.orientation
         siny_cosp = 2 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
         self.current_yaw = math.atan2(siny_cosp, cosy_cosp)
 
-    def radiation_callback(self, msg: RadiationList):
-        """Update radiation level for this robot"""
+    def radiation_callback(self, msg):
         for rad in msg.data:
             if rad.robot_id == self.robot_name:
                 self.current_radiation = rad.level
                 break
 
-    # ==================== HELPER FUNCTIONS ====================
+    def scan_callback(self, msg):
+        if len(msg.ranges) < 360:
+            return
+        # Front: -20 to +20 degrees
+        front_ranges = list(msg.ranges[340:360]) + list(msg.ranges[0:20])
+        valid_front = [r for r in front_ranges if 0.01 < r < 10.0]
+        self.front_min_dist = min(valid_front) if valid_front else 10.0
+
+        # Left: 20 to 70 degrees
+        left_ranges = list(msg.ranges[20:70])
+        valid_left = [r for r in left_ranges if 0.01 < r < 10.0]
+        self.left_min_dist = min(valid_left) if valid_left else 10.0
+
+        # Right: 290 to 340 degrees
+        right_ranges = list(msg.ranges[290:340])
+        valid_right = [r for r in right_ranges if 0.01 < r < 10.0]
+        self.right_min_dist = min(valid_right) if valid_right else 10.0
+
+    # ==================== HELPERS ====================
 
     def get_red_barrels(self):
-        """Filter for red barrels only"""
         return [b for b in self.visible_barrels if b.colour == Barrel.RED]
 
     def get_green_zones(self):
-        """Filter for green zones"""
         return [z for z in self.visible_zones if z.zone == Zone.ZONE_GREEN]
 
     def get_cyan_zones(self):
-        """Filter for cyan zones"""
         return [z for z in self.visible_zones if z.zone == Zone.ZONE_CYAN]
 
     def stop_robot(self):
-        """Stop all robot motion"""
         twist = Twist()
-        self.cmd_vel_pub.publish(twist)
-
-    def move_forward(self, speed=None):
-        """Move robot forward"""
-        if speed is None:
-            speed = self.LINEAR_SPEED
-        twist = Twist()
-        twist.linear.x = speed
-        self.cmd_vel_pub.publish(twist)
-
-    def rotate(self, angular_speed=None):
-        """Rotate robot"""
-        if angular_speed is None:
-            angular_speed = self.ANGULAR_SPEED
-        twist = Twist()
-        twist.angular.z = angular_speed
-        self.cmd_vel_pub.publish(twist)
-
-    def move_towards_target(self, x_offset, size):
-        """
-        Visual servoing: move towards a target based on camera x offset and size.
-        """
-        twist = Twist()
-
-        # Rotate to center the target
-        if abs(x_offset) > self.VISUAL_CENTER_THRESHOLD:
-            twist.angular.z = -0.002 * x_offset
-            twist.angular.z = max(-self.ANGULAR_SPEED, min(self.ANGULAR_SPEED, twist.angular.z))
-        else:
-            twist.angular.z = 0.0
-
-        # Move forward if not too close
-        if size < self.BARREL_SIZE_CLOSE:
-            twist.linear.x = self.LINEAR_SPEED * 0.8
-        else:
-            twist.linear.x = self.LINEAR_SPEED * 0.3
-
         self.cmd_vel_pub.publish(twist)
 
     def send_nav_goal(self, x, y, yaw=0.0):
-        """Send a navigation goal using Nav2 action client (non-blocking)"""
         if not self.use_nav2:
-            self.get_logger().warn('Nav2 not available!')
             return False
 
         goal_msg = NavigateToPose.Goal()
@@ -328,72 +282,52 @@ class CleanerBot(Node):
         goal_msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
         goal_msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
 
-        self.get_logger().info(f'Sending nav goal to ({x:.2f}, {y:.2f})')
-
-        # Send goal asynchronously
+        self.get_logger().info(f'Nav goal: ({x:.1f}, {y:.1f})')
         send_goal_future = self.nav_client.send_goal_async(goal_msg)
-        send_goal_future.add_done_callback(self._nav_goal_response_callback)
+        send_goal_future.add_done_callback(self._nav_goal_response)
         self.nav_active = True
         return True
 
-    def _nav_goal_response_callback(self, future):
-        """Callback when goal is accepted/rejected"""
+    def _nav_goal_response(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self.get_logger().warn('Navigation goal was rejected!')
+            self.get_logger().warn('Nav goal rejected!')
             self.nav_active = False
-            self.nav_goal_handle = None
             return
-
-        self.get_logger().info('Navigation goal accepted!')
         self.nav_goal_handle = goal_handle
-
-        # Get result asynchronously
         self.nav_result_future = goal_handle.get_result_async()
-        self.nav_result_future.add_done_callback(self._nav_result_callback)
+        self.nav_result_future.add_done_callback(self._nav_result)
 
-    def _nav_result_callback(self, future):
-        """Callback when navigation completes"""
+    def _nav_result(self, future):
         result = future.result()
-        status = result.status
-
-        if status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info('Navigation succeeded!')
-        elif status == GoalStatus.STATUS_CANCELED:
-            self.get_logger().info('Navigation was cancelled')
-        else:
-            self.get_logger().warn(f'Navigation failed with status: {status}')
-
+        if result.status == GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info('Nav succeeded!')
+            # Only advance waypoint on successful arrival
+            if self.state == State.SEARCHING and not self.has_barrel:
+                self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
         self.nav_active = False
         self.nav_goal_handle = None
-        self.nav_result_future = None
 
     def cancel_navigation(self):
-        """Cancel current navigation goal"""
         if self.nav_goal_handle is not None:
-            self.get_logger().info('Cancelling navigation...')
-            cancel_future = self.nav_goal_handle.cancel_goal_async()
+            self.nav_goal_handle.cancel_goal_async()
             self.nav_active = False
             self.nav_goal_handle = None
 
     def is_navigation_active(self):
-        """Check if navigation is currently active"""
         return self.nav_active
 
     # ==================== STATE MACHINE ====================
 
     def control_loop(self):
-        """Main control loop - state machine"""
         if not self.startup_complete:
             return
 
-        # Priority check: High radiation -> go decontaminate
+        # Priority: Radiation check
         if (self.current_radiation > self.RADIATION_THRESHOLD and
             self.state not in [State.NAVIGATING_TO_CYAN, State.DECONTAMINATING]):
-            self.get_logger().warn(
-                f'Radiation level {self.current_radiation:.1f} exceeds threshold! Going to decontaminate.')
+            self.get_logger().warn(f'High radiation! {self.current_radiation:.1f}')
             self.cancel_navigation()
-            self.previous_state = self.state
             self.state = State.NAVIGATING_TO_CYAN
 
         # State machine
@@ -403,109 +337,300 @@ class CleanerBot(Node):
         elif self.state == State.SEARCHING:
             self._handle_searching()
 
-        elif self.state == State.APPROACHING_BARREL:
+        elif self.state == State.APPROACHING:
             self._handle_approaching()
 
-        elif self.state == State.COLLECTING:
-            self._handle_collecting()
+        elif self.state == State.RAMMING:
+            self._handle_ramming()
 
         elif self.state == State.NAVIGATING_TO_GREEN:
-            self._handle_navigating_to_green()
+            self._handle_nav_to_green()
 
         elif self.state == State.DELIVERING:
             self._handle_delivering()
 
         elif self.state == State.NAVIGATING_TO_CYAN:
-            self._handle_navigating_to_cyan()
+            self._handle_nav_to_cyan()
 
         elif self.state == State.DECONTAMINATING:
             self._handle_decontaminating()
 
     def _handle_searching(self):
-        """Search state: Navigate to waypoints (pure patrol for now)"""
-        # TODO: 目标二将添加桶检测逻辑
-        # 当前只做纯巡逻
+        """Search: Use Nav2 to patrol, watch for barrels."""
+        if self.has_barrel:
+            return
 
-        # Continue patrol via waypoints
-        if not self.is_navigation_active():
-            waypoint = self.search_waypoints[self.current_waypoint_idx]
-            self.get_logger().info(
-                f'Navigating to waypoint {self.current_waypoint_idx + 1}/{len(self.search_waypoints)}: ({waypoint[0]}, {waypoint[1]})')
-            self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
-            self.send_nav_goal(waypoint[0], waypoint[1])
-
-    def _handle_approaching(self):
-        """Approach state: Visual servoing towards detected barrel"""
         red_barrels = self.get_red_barrels()
 
-        if not red_barrels:
-            self.get_logger().warn('Lost sight of barrel during approach!')
-            self.target_barrel = None
+        if red_barrels:
+            # Get largest barrel
+            best = max(red_barrels, key=lambda b: b.size)
+
+            # Start visual approach when barrel is visible and big enough
+            if best.size > self.BARREL_SIZE_START:
+                x_offset = best.x - self.IMAGE_CENTER_X
+
+                # SAFETY: Check if we're stuck (surrounded by walls)
+                if self.front_min_dist < 0.3 and self.left_min_dist < 0.3 and self.right_min_dist < 0.3:
+                    self.get_logger().warn('STUCK! Walls on all sides - let Nav2 handle escape')
+                    self.stop_robot()
+                    return  # Let Nav2 find a way out
+
+                # If barrel is VERY big but not centered, we're probably stuck next to it
+                # Skip alignment and go straight to ramming if barrel is huge
+                if best.size > self.BARREL_SIZE_COMMIT:
+                    self.get_logger().info(f'BARREL HUGE! size={best.size:.0f} -> RAMMING directly')
+                    self.cancel_navigation()
+                    self.ram_counter = 0
+                    self.state = State.RAMMING
+                    return
+
+                # If barrel not centered, turn toward it first
+                if abs(x_offset) > 80:  # More than ~80 pixels off center
+                    self.cancel_navigation()
+
+                    # Check for wall corners before turning!
+                    want_turn_left = x_offset < 0  # barrel on left
+                    want_turn_right = x_offset > 0  # barrel on right
+
+                    if want_turn_left and self.left_min_dist < 0.35:
+                        self.get_logger().warn(f'Want to turn left but wall corner at {self.left_min_dist:.2f}m - abort')
+                        self.stop_robot()
+                        return  # Stay in SEARCHING, Nav2 will continue
+
+                    if want_turn_right and self.right_min_dist < 0.35:
+                        self.get_logger().warn(f'Want to turn right but wall corner at {self.right_min_dist:.2f}m - abort')
+                        self.stop_robot()
+                        return  # Stay in SEARCHING, Nav2 will continue
+
+                    # Also check front - if front is blocked, we can't approach anyway
+                    if self.front_min_dist < 0.35:
+                        self.get_logger().warn(f'Front blocked at {self.front_min_dist:.2f}m - abort')
+                        self.stop_robot()
+                        return
+
+                    twist = Twist()
+                    twist.angular.z = -0.006 * x_offset  # Turn toward barrel
+                    twist.angular.z = max(-0.5, min(0.5, twist.angular.z))
+                    self.cmd_vel_pub.publish(twist)
+                    self.get_logger().info(f'BARREL SEEN! x={best.x:.0f} size={best.size:.0f} - ALIGNING')
+                    return
+
+                # Barrel is centered enough, start approaching
+                self.get_logger().info(f'BARREL ALIGNED! x={best.x:.0f} size={best.size:.0f} -> APPROACHING')
+                self.cancel_navigation()
+                self.approach_counter = 0
+                self.lost_sight_counter = 0
+                self.state = State.APPROACHING
+                return
+
+        # Continue patrol
+        if not self.is_navigation_active():
+            wp = self.search_waypoints[self.current_waypoint_idx]
+            self.get_logger().info(f'Waypoint {self.current_waypoint_idx + 1}/{len(self.search_waypoints)}: ({wp[0]}, {wp[1]})')
+            self.send_nav_goal(wp[0], wp[1])
+
+    def _handle_approaching(self):
+        """Visual servoing approach to barrel with obstacle avoidance.
+
+        KEY SAFETY RULE: Only move forward if path is clear.
+        If there's an obstacle but barrel is small = wall blocking, don't move forward.
+        """
+        self.approach_counter += 1
+
+        # Timeout check
+        if self.approach_counter > self.MAX_APPROACH_ATTEMPTS:
+            self.get_logger().warn('Approach timeout, back to search')
+            self.stop_robot()
             self.state = State.SEARCHING
             return
 
-        largest = max(red_barrels, key=lambda b: b.size)
-        self.target_barrel = largest
+        red_barrels = self.get_red_barrels()
 
-        # Check if close enough to collect
-        if largest.size >= self.BARREL_SIZE_CLOSE:
-            self.get_logger().info('Close enough to barrel! Attempting collection...')
+        if not red_barrels:
+            self.lost_sight_counter += 1
+            if self.lost_sight_counter > 30:  # 3 seconds
+                self.get_logger().warn('Lost barrel, back to search')
+                self.stop_robot()
+                self.state = State.SEARCHING
+                return
+            # Stop and wait, don't blindly move
             self.stop_robot()
-            self.state = State.COLLECTING
-            self.service_pending = False
             return
 
-        # Visual servoing towards barrel
-        self.move_towards_target(largest.x, largest.size)
+        # Found barrel
+        self.lost_sight_counter = 0
+        best = max(red_barrels, key=lambda b: b.size)
 
-    def _handle_collecting(self):
-        """Collect state: Drive into barrel and call pickup service"""
-        # TODO: 目标二将实现此功能
-        # 当前只是占位，直接返回搜索状态
-        self.get_logger().info('COLLECTING state - not implemented yet, returning to search')
-        self.state = State.SEARCHING
+        # Check if close enough to start ramming
+        if best.size > self.BARREL_SIZE_COMMIT:
+            self.get_logger().info(f'BARREL CLOSE! size={best.size:.0f} -> RAMMING')
+            self.ram_counter = 0
+            self.state = State.RAMMING
+            return
 
-    def _handle_navigating_to_green(self):
-        """Navigate to green zone for delivery"""
+        # Calculate steering - keep barrel centered
+        x_offset = best.x - self.IMAGE_CENTER_X
+        # Use stronger gain for steering to keep barrel centered
+        angular_z = -0.006 * x_offset
+
+        # SAFETY CHECK: Is there something blocking our path?
+        # If front distance is small but barrel is not big, it's a WALL
+        if self.front_min_dist < 0.4:
+            # Is it the barrel or a wall?
+            # Barrel at 0.4m should have size roughly > 1500
+            # If size is small, it's seeing barrel through wall/door
+            if best.size < 1500:
+                self.get_logger().warn(
+                    f'WALL DETECTED! front={self.front_min_dist:.2f}m but barrel small={best.size:.0f}. '
+                    f'Aborting approach.'
+                )
+                self.stop_robot()
+                # Give up on this barrel, go back to search
+                self.state = State.SEARCHING
+                return
+
+        # Determine if we can move forward
+        linear_x = 0.0
+
+        # Only move forward if path is reasonably clear
+        if self.front_min_dist > 0.5:
+            linear_x = self.LINEAR_SPEED
+        elif self.front_min_dist > 0.35:
+            # Close but maybe it's the barrel - check size
+            if best.size > 1000:
+                linear_x = 0.1  # Slow approach
+            else:
+                linear_x = 0.0  # Don't move, something's in the way
+        else:
+            # Very close - only proceed if barrel is big
+            if best.size > 2000:
+                linear_x = 0.1
+                self.get_logger().info('Close to barrel, slow approach')
+            else:
+                linear_x = 0.0
+
+        # Side obstacle avoidance (wall corners)
+        # If side obstacle is very close, we need to stop and reconsider
+        if self.left_min_dist < 0.25 or self.right_min_dist < 0.25:
+            self.get_logger().warn(
+                f'Wall corner too close! L={self.left_min_dist:.2f} R={self.right_min_dist:.2f} - abort approach'
+            )
+            self.stop_robot()
+            self.state = State.SEARCHING
+            return
+
+        # If side obstacle moderately close, steer away
+        if self.left_min_dist < 0.4:
+            angular_z -= 0.3  # Turn right more aggressively
+        if self.right_min_dist < 0.4:
+            angular_z += 0.3  # Turn left more aggressively
+
+        # Clamp angular velocity
+        angular_z = max(-0.4, min(0.4, angular_z))
+
+        twist = Twist()
+        twist.linear.x = linear_x
+        twist.angular.z = angular_z
+        self.cmd_vel_pub.publish(twist)
+
+        # Log occasionally
+        if self.approach_counter % 10 == 0:
+            self.get_logger().info(
+                f'APPROACH: size={best.size:.0f} x={best.x:.0f} '
+                f'front={self.front_min_dist:.2f} L={self.left_min_dist:.2f} R={self.right_min_dist:.2f} '
+                f'lin={linear_x:.2f}'
+            )
+
+    def _handle_ramming(self):
+        """Ram: Drive forward to push through barrel, try pickup."""
+        self.ram_counter += 1
+
+        # Timeout
+        if self.ram_counter > self.MAX_RAM_ATTEMPTS:
+            self.get_logger().warn('Ram timeout, back to search')
+            self.stop_robot()
+            self.state = State.SEARCHING
+            return
+
+        # SAFETY: If we're stuck (can't move forward), abort early
+        if self.front_min_dist < 0.15 and self.left_min_dist < 0.25 and self.right_min_dist < 0.25:
+            self.get_logger().warn(f'STUCK during ram! front={self.front_min_dist:.2f} - abort')
+            self.stop_robot()
+            self.state = State.SEARCHING
+            return
+
+        # Drive forward
+        twist = Twist()
+        twist.linear.x = self.LINEAR_SPEED
+
+        # Steering to keep barrel centered during ramming
+        red_barrels = self.get_red_barrels()
+        if red_barrels:
+            best = max(red_barrels, key=lambda b: b.size)
+            x_offset = best.x - self.IMAGE_CENTER_X
+            twist.angular.z = -0.005 * x_offset  # Stronger steering during ram
+            twist.angular.z = max(-0.4, min(0.4, twist.angular.z))
+
+        self.cmd_vel_pub.publish(twist)
+
+        # Try pickup every cycle
+        request = ItemRequest.Request()
+        request.robot_id = self.robot_name
+        future = self.pickup_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=0.2)
+
+        if future.done():
+            result = future.result()
+            if result and result.success:
+                self.get_logger().info(f'COLLECTED! {result.message}')
+                self.has_barrel = True
+                self.collected_count += 1
+                self.stop_robot()
+                self.state = State.NAVIGATING_TO_GREEN
+
+    def _handle_nav_to_green(self):
+        """Navigate to green zone."""
         if not self.is_navigation_active():
-            self.get_logger().info('Navigating to GREEN ZONE for delivery...')
+            self.get_logger().info('Going to GREEN zone...')
             self.send_nav_goal(self.green_zone_approx[0], self.green_zone_approx[1])
         else:
-            # Check if we can see green zone while navigating
-            green_zones = self.get_green_zones()
-            if green_zones and green_zones[0].size > 100:
-                self.get_logger().info('Green zone visible and close!')
+            # Check if we see green zone
+            green = self.get_green_zones()
+            if green and green[0].size > 500:
+                self.get_logger().info('Green zone visible!')
                 self.cancel_navigation()
                 self.state = State.DELIVERING
                 self.service_pending = False
 
     def _handle_delivering(self):
-        """Deliver state: Offload barrel at green zone"""
-        green_zones = self.get_green_zones()
+        """Deliver barrel at green zone."""
+        green = self.get_green_zones()
 
-        if green_zones:
-            zone = green_zones[0]
-            if abs(zone.x) > self.VISUAL_CENTER_THRESHOLD:
-                self.rotate(-0.002 * zone.x)
+        # Align with zone if visible
+        if green:
+            zone = green[0]
+            x_offset = zone.x - self.IMAGE_CENTER_X  # Convert to offset from center
+            if abs(x_offset) > 50:
+                twist = Twist()
+                twist.angular.z = -0.003 * x_offset
+                self.cmd_vel_pub.publish(twist)
                 return
 
-        # Check if service call already pending
+        # Try offload
         if self.service_pending and self.service_future is not None:
             if self.service_future.done():
-                try:
-                    result = self.service_future.result()
-                    if result.success:
-                        self.get_logger().info(f'DELIVERED BARREL! Message: {result.message}')
-                        self.get_logger().info(f'Total collected: {self.collected_count}')
-                        self.has_barrel = False
-                        self.stop_robot()
-                        self.state = State.SEARCHING
-                    else:
-                        self.get_logger().warn(f'Delivery failed: {result.message}')
-                        self.move_forward(self.LINEAR_SPEED * 0.3)
-                except Exception as e:
-                    self.get_logger().error(f'Service call error: {e}')
+                result = self.service_future.result()
+                if result and result.success:
+                    self.get_logger().info(f'DELIVERED! Total: {self.collected_count}')
+                    self.has_barrel = False
+                    self.stop_robot()
                     self.state = State.SEARCHING
+                else:
+                    # Move forward and retry
+                    twist = Twist()
+                    twist.linear.x = 0.1
+                    self.cmd_vel_pub.publish(twist)
                 self.service_pending = False
                 self.service_future = None
             return
@@ -515,70 +640,65 @@ class CleanerBot(Node):
         request.robot_id = self.robot_name
         self.service_future = self.offload_client.call_async(request)
         self.service_pending = True
-        self.get_logger().info(f'Calling offload_item for {self.robot_name}...')
 
-    def _handle_navigating_to_cyan(self):
-        """Navigate to cyan zone for decontamination"""
+    def _handle_nav_to_cyan(self):
+        """Navigate to cyan zone for decontamination."""
         if not self.is_navigation_active():
-            self.get_logger().info('Navigating to CYAN ZONE for decontamination...')
+            self.get_logger().info('Going to CYAN zone...')
             self.send_nav_goal(self.cyan_zone_approx[0], self.cyan_zone_approx[1])
         else:
-            cyan_zones = self.get_cyan_zones()
-            if cyan_zones and cyan_zones[0].size > 100:
-                self.get_logger().info('Cyan zone visible and close!')
+            cyan = self.get_cyan_zones()
+            if cyan and cyan[0].size > 500:
+                self.get_logger().info('Cyan zone visible!')
                 self.cancel_navigation()
                 self.state = State.DECONTAMINATING
                 self.service_pending = False
 
     def _handle_decontaminating(self):
-        """Decontaminate at cyan zone"""
-        cyan_zones = self.get_cyan_zones()
+        """Decontaminate at cyan zone."""
+        cyan = self.get_cyan_zones()
 
-        if cyan_zones:
-            zone = cyan_zones[0]
-            if abs(zone.x) > self.VISUAL_CENTER_THRESHOLD:
-                self.rotate(-0.002 * zone.x)
+        if cyan:
+            zone = cyan[0]
+            x_offset = zone.x - self.IMAGE_CENTER_X  # Convert to offset from center
+            if abs(x_offset) > 50:
+                twist = Twist()
+                twist.angular.z = -0.003 * x_offset
+                self.cmd_vel_pub.publish(twist)
                 return
 
-        # Check if service call already pending
         if self.service_pending and self.service_future is not None:
             if self.service_future.done():
-                try:
-                    result = self.service_future.result()
-                    if result.success:
-                        self.get_logger().info(f'DECONTAMINATED! Message: {result.message}')
-                        self.stop_robot()
-                        if self.has_barrel:
-                            self.state = State.NAVIGATING_TO_GREEN
-                        else:
-                            self.state = State.SEARCHING
+                result = self.service_future.result()
+                if result and result.success:
+                    self.get_logger().info('DECONTAMINATED!')
+                    self.stop_robot()
+                    if self.has_barrel:
+                        self.state = State.NAVIGATING_TO_GREEN
                     else:
-                        self.get_logger().warn(f'Decontamination failed: {result.message}')
-                        self.move_forward(self.LINEAR_SPEED * 0.3)
-                except Exception as e:
-                    self.get_logger().error(f'Service call error: {e}')
-                    self.state = State.SEARCHING
+                        self.state = State.SEARCHING
+                else:
+                    twist = Twist()
+                    twist.linear.x = 0.1
+                    self.cmd_vel_pub.publish(twist)
                 self.service_pending = False
                 self.service_future = None
             return
 
-        # Start service call
         request = ItemRequest.Request()
         request.robot_id = self.robot_name
         self.service_future = self.decontam_client.call_async(request)
         self.service_pending = True
-        self.get_logger().info(f'Calling decontaminate for {self.robot_name}...')
 
 
 def main(args=None):
     rclpy.init(args=args)
-
     node = CleanerBot()
 
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info('Keyboard interrupt, shutting down...')
+        node.get_logger().info('Shutting down...')
     except ExternalShutdownException:
         pass
     finally:
