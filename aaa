@@ -16,3 +16,11 @@ ros2 run turtlebot3_teleop teleop_keyboard   --ros-args --remap cmd_vel:=/robot1
 # 终端 4 - 保存地图（2小时后）
 ros2 run nav2_map_server map_saver_cli -f solution/config/map2 \
   --ros-args -r map:=/robot1/map
+
+-------
+
+# 终端1: 启动仿真 + Nav2
+ros2 launch solution solution_launch.py use_nav2:=true
+
+# 终端2: 启动cleaner_bot
+ros2 run solution cleaner_bot --ros-args -p robot_namespace:=robot1

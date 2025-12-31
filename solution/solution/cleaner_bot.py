@@ -111,21 +111,32 @@ class CleanerBot(Node):
         self.LINEAR_SPEED = 0.18
         self.ANGULAR_SPEED = 0.4
 
-        # Search waypoints - zigzag pattern covering the entire map
-        # Map range: X [1.0, 14.0], Y [-19.0, 15.0]
+        # Search waypoints - priority areas for barrel search
+        # 1. Left room (top-left big room)
+        # 2. Left vertical corridor (where barrels are shown)
+        # 3. Right area
         self.search_waypoints = [
-            (1.0, 0.0),
-            (14.0, 0.0),
-            (14.0, 6.0),
-            (1.0, 6.0),
-            (1.0, 12.0),
-            (14.0, 12.0),
-            (14.0, -6.0),
-            (1.0, -6.0),
-            (1.0, -12.0),
-            (14.0, -12.0),
-            (14.0, -18.0),
-            (1.0, -18.0),
+            
+            
+            
+            (2,3),
+            
+            (9.8, 6.0),
+            (10.0, 6.0),
+
+            (9.8, 9.0),
+            (9.8, 12.0),
+            (9.8, 15.0),
+            (7, 15.0),
+            (7, 12.0),
+            (7, 10.0),
+            (7, 9.0),
+            (14, 9.0),
+            (14, 15.0),
+
+            (9.5, -10.0),
+            (9.5, -20.0),
+       
         ]
 
         # Known zone locations (approximate, will verify with vision)
