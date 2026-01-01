@@ -1270,21 +1270,29 @@ class CleanerBot(Node):
                 twist.linear.x = 0.0
                 twist.angular.z = 0.0
             elif self.front_min_dist > 0.4:
-                # 始终向前移动，这是主要目标
-                twist.linear.x = 0.15  # 稍微加快前进速度
-
-                # 视觉伺服对准红桶，但限制角速度以免过度旋转
+                # 视觉伺服对准红桶
                 red_barrels = self.get_red_barrels()
                 if red_barrels:
                     best_red = max(red_barrels, key=lambda b: b.size)
                     x_offset = best_red.x - self.IMAGE_CENTER_X
-                    # 只有偏移较大时才修正，且使用更小的角速度
-                    if abs(x_offset) > 50:  # 增大死区
-                        twist.angular.z = -0.15 if x_offset > 0 else 0.15  # 减小角速度
+
+                    # 比例控制角速度，更积极地对准
+                    twist.angular.z = -0.003 * x_offset
+                    twist.angular.z = max(-0.4, min(0.4, twist.angular.z))
+
+                    # 根据对准程度调整前进速度
+                    if abs(x_offset) > 100:
+                        # 偏移大时慢速前进，优先对准
+                        twist.linear.x = 0.08
+                    elif abs(x_offset) > 30:
+                        # 中等偏移，中速前进
+                        twist.linear.x = 0.12
                     else:
-                        twist.angular.z = 0.0
+                        # 对准良好，正常前进
+                        twist.linear.x = 0.15
                 else:
                     # 看不到红桶时保持直行
+                    twist.linear.x = 0.15
                     twist.angular.z = 0.0
             else:
                 self.get_logger().info(f'Close enough (front={self.front_min_dist:.2f}m), stopping')
