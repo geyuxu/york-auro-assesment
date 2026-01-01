@@ -1083,17 +1083,17 @@ class CleanerBot(Node):
     def _handle_scanning(self):
         """SCANNING: 到达巡视点后左右扫描寻找红桶。
 
-        扫描流程: 向左转20° -> 回正 -> 向右转20° -> 回正 -> 完成
+        扫描流程: 向左转90° -> 回正 -> 向右转90° -> 回正 -> 完成
         如果扫描过程中发现红桶，立即切换到APPROACHING。
         扫描完成后，前进到下一个巡视点。
         """
-        SCAN_ANGLE = math.radians(25)  # 扫描角度25度
+        SCAN_ANGLE = math.radians(90)  # 扫描角度90度（左右各90度，共180度）
 
-        # 扫描超时保护（20秒）
+        # 扫描超时保护（40秒，因为要扫描180度）
         if not hasattr(self, 'scan_counter'):
             self.scan_counter = 0
         self.scan_counter += 1
-        if self.scan_counter > 200:  # 20秒超时
+        if self.scan_counter > 400:  # 40秒超时
             self.get_logger().warn('SCANNING timeout, moving to next waypoint')
             self.scan_counter = 0
             self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
@@ -1113,6 +1113,8 @@ class CleanerBot(Node):
                 barrel_pos = self.estimate_barrel_world_position(best)
                 if barrel_pos:
                     self.get_logger().info(f'SCANNING: Found barrel! size={best.size:.0f} x={best.x:.0f} -> APPROACHING')
+                    self.stop_robot()  # 停止转向
+                    self.scan_counter = 0  # 重置扫描计数器
                     self.approach_counter = 0
                     self.lost_sight_counter = 0
                     self.approach_target = barrel_pos
