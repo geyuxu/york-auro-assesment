@@ -955,6 +955,8 @@ class CleanerBot(Node):
         # 墙壁避让：Nav2导航时，如果一侧靠近墙壁，稍微向另一侧转向
         if self.is_navigation_active():
             self._apply_wall_avoidance()
+            # Nav2卡住检测：如果导航active但机器人长时间不动，重新规划
+            self._check_nav_stuck()
 
     def _apply_wall_avoidance(self):
         """根据雷达距离，主动向空旷方向行走，避免蹭墙/撞墙角。
@@ -1021,6 +1023,62 @@ class CleanerBot(Node):
             twist.angular.z = max(0.15, strength * 0.4)  # 左转
             self.cmd_vel_pub.publish(twist)
         # 两边都有墙或两边都远，不干预Nav2
+
+    def _check_nav_stuck(self):
+        """检测Nav2是否卡住：导航active但机器人长时间不动。
+
+        卡住后：先向空旷方向移动，再重新规划。
+        """
+        # 初始化卡住检测变量
+        if not hasattr(self, '_nav_stuck_last_pos'):
+            self._nav_stuck_last_pos = (self.map_x, self.map_y)
+            self._nav_stuck_counter = 0
+            self._nav_stuck_escape_counter = 0
+            return
+
+        # 如果正在逃脱中，继续向空地移动
+        if self._nav_stuck_escape_counter > 0:
+            self._nav_stuck_escape_counter -= 1
+            twist = Twist()
+            # 向更空旷的方向移动
+            if self.left_side_min_dist > self.right_side_min_dist:
+                twist.linear.x = 0.15
+                twist.angular.z = 0.4  # 左转
+            else:
+                twist.linear.x = 0.15
+                twist.angular.z = -0.4  # 右转
+
+            # 如果前方太近，后退
+            if self.front_min_dist < 0.4:
+                twist.linear.x = -0.15
+
+            self.cmd_vel_pub.publish(twist)
+
+            # 逃脱完成后，清除costmap让Nav2重新规划
+            if self._nav_stuck_escape_counter == 0:
+                self.get_logger().info('Escape complete, clearing costmap for re-planning')
+                self.clear_costmaps()
+                self._nav_stuck_last_pos = (self.map_x, self.map_y)
+            return
+
+        # 计算移动距离
+        dx = self.map_x - self._nav_stuck_last_pos[0]
+        dy = self.map_y - self._nav_stuck_last_pos[1]
+        dist_moved = math.sqrt(dx*dx + dy*dy)
+
+        if dist_moved < 0.05:  # 移动不到5cm
+            self._nav_stuck_counter += 1
+            # 50个tick（5秒）不动，认为卡住了
+            if self._nav_stuck_counter > 50:
+                self.get_logger().warn(f'Nav2 stuck detected! Escaping to open space...')
+                self.cancel_navigation()
+                self._nav_stuck_counter = 0
+                # 启动逃脱：向空地移动20个tick（2秒）
+                self._nav_stuck_escape_counter = 20
+        else:
+            # 有移动，重置计数器和位置
+            self._nav_stuck_counter = 0
+            self._nav_stuck_last_pos = (self.map_x, self.map_y)
 
     def _handle_scanning(self):
         """SCANNING: 到达巡视点后左右扫描寻找红桶。
@@ -1596,6 +1654,7 @@ class CleanerBot(Node):
         # 墙壁避让：向空地走
         if self.is_navigation_active():
             self._apply_wall_avoidance()
+            self._check_nav_stuck()
 
     def _handle_delivering(self):
         """Deliver barrel at green zone - 进入绿区就放下桶."""
@@ -1712,6 +1771,7 @@ class CleanerBot(Node):
         # 墙壁避让：向空地走
         if self.is_navigation_active():
             self._apply_wall_avoidance()
+            self._check_nav_stuck()
 
     def _handle_decontaminating(self):
         """Decontaminate at cyan zone."""
