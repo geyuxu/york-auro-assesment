@@ -221,48 +221,62 @@ STATE MACHINE STATES:
 - NAVIGATING_TO_CYAN: Going to decontaminate
 - DELIVERING/DECONTAMINATING: Service calls in progress
 
-ACTIONS - You can either use high-level state commands OR direct motion control:
+YOU ARE IN DIRECT CONTROL MODE - You control the robot's movement directly!
 
-HIGH-LEVEL COMMANDS:
-- CONTINUE: Let default state machine handle it
-- SEARCH: Force return to searching state
-- APPROACH: Approach visible barrel (only if barrels visible)
-- DELIVER: Go to green zone (only if carrying barrel)
-- DECONTAMINATE: Go to cyan zone (if radiation high)
-
-DIRECT MOTION CONTROL (use when you need precise control):
+MOTION COMMANDS (these move the robot):
 - FORWARD: Move forward (0.2 m/s)
-- FORWARD_SLOW: Move forward slowly (0.1 m/s)
+- FORWARD_SLOW: Move forward slowly (0.1 m/s) - use when close to barrel
+- FORWARD_FAST: Move forward faster (0.3 m/s)
 - BACKWARD: Move backward (-0.15 m/s)
 - TURN_LEFT: Rotate left (0.5 rad/s)
 - TURN_RIGHT: Rotate right (-0.5 rad/s)
 - TURN_LEFT_SLOW: Rotate left slowly (0.3 rad/s)
 - TURN_RIGHT_SLOW: Rotate right slowly (-0.3 rad/s)
-- STOP: Stop all motion
-
-COMBINED MOTION (move and turn simultaneously):
+- TURN_LEFT_FAST: Rotate left fast (0.8 rad/s)
+- TURN_RIGHT_FAST: Rotate right fast (-0.8 rad/s)
 - FORWARD_LEFT: Move forward while turning left
 - FORWARD_RIGHT: Move forward while turning right
 - BACKWARD_LEFT: Move backward while turning left
 - BACKWARD_RIGHT: Move backward while turning right
+- STOP: Stop all motion
 
-DECISION GUIDELINES:
-1. If barrel visible and NOT carrying one:
-   - If barrel is centered (x near 320) and large -> FORWARD to approach
-   - If barrel is on left (x < 270) -> TURN_LEFT or FORWARD_LEFT to center it
-   - If barrel is on right (x > 370) -> TURN_RIGHT or FORWARD_RIGHT to center it
-2. If carrying barrel -> CONTINUE (let state machine deliver)
-3. If front distance < 0.3m and need to move forward -> BACKWARD first, then turn
-4. If stuck (not moving for a while) -> try BACKWARD then TURN_LEFT or TURN_RIGHT
-5. If see barrel very close (size > 10000) -> FORWARD_SLOW to not overshoot
+SERVICE COMMANDS (these call ROS services):
+- PICKUP: Pick up barrel (only when very close to barrel, front < 0.5m)
+- OFFLOAD: Drop barrel (only when in green zone, has barrel)
+- DECONTAMINATE_SERVICE: Decontaminate (only when in cyan zone)
 
-IMPORTANT:
-- Use direct motion when you see a barrel and want to approach it precisely
-- Barrel x < 320 means it's on the LEFT side of camera
-- Barrel x > 320 means it's on the RIGHT side of camera
-- Larger barrel size = closer to robot
+DECISION LOGIC:
 
-Respond with ONLY the action name."""
+1. If NOT carrying barrel and see barrel:
+   - Barrel on LEFT (x < 270) -> TURN_LEFT or FORWARD_LEFT
+   - Barrel on RIGHT (x > 370) -> TURN_RIGHT or FORWARD_RIGHT
+   - Barrel CENTERED (270 < x < 370):
+     - If far (size < 5000) -> FORWARD
+     - If medium (5000 < size < 15000) -> FORWARD_SLOW
+     - If very close (size > 15000, front < 0.5m) -> PICKUP
+
+2. If carrying barrel:
+   - Need to find green zone and go there
+   - If see green zone: move toward it
+   - If in green zone (size > 5000) -> OFFLOAD
+
+3. If front blocked (front < 0.3m):
+   - BACKWARD first, then turn toward open space
+
+4. If nothing visible:
+   - TURN_LEFT to scan for barrels
+
+5. If radiation > 50 and not carrying barrel:
+   - Find cyan zone and use DECONTAMINATE_SERVICE
+
+REMEMBER:
+- x < 320 = LEFT side of camera
+- x > 320 = RIGHT side of camera
+- Larger size = closer object
+- You must use PICKUP to collect barrel, just being close is not enough!
+- You must use OFFLOAD in green zone to deliver barrel!
+
+Respond with ONLY ONE command name."""
 
         # Format barrel info with full details
         barrels_str = "None visible"

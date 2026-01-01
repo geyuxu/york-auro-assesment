@@ -335,13 +335,12 @@ class CleanerBot(Node):
         # LLM interface initialization
         self.llm = get_llm_interface(self.get_logger())
         self.llm_enabled = self.llm.is_available()
-        self.llm_decision_interval = 30  # Check LLM every 30 ticks (3 seconds) normally
-        self.llm_motion_interval = 10    # Check every 10 ticks (1 second) during direct motion
-        self.llm_decision_counter = 0
+        self.llm_direct_control = True    # True = LLM直接控制模式（绕过状态机）
+        self.llm_control_interval = 5     # LLM控制模式下每5个tick(0.5秒)查询一次
+        self.llm_counter = 0
         self.last_llm_action = None
-        self.llm_in_motion_control = False  # True when LLM is doing direct motion control
         if self.llm_enabled:
-            self.get_logger().info('LLM integration enabled')
+            self.get_logger().info('LLM DIRECT CONTROL MODE enabled - LLM controls robot directly')
         else:
             self.get_logger().info('LLM integration disabled (no API key or openai library)')
 
@@ -610,6 +609,199 @@ class CleanerBot(Node):
         self.cancel_navigation()
         self.llm.log_event("action_stop", {})
         self.get_logger().info('[LLM ACTION] -> STOP')
+
+    def action_pickup(self) -> bool:
+        """Atomic action: Try to pick up a barrel."""
+        if self.has_barrel:
+            return False
+        request = ItemRequest.Request()
+        request.robot_id = self.robot_name
+        future = self.pickup_client.call_async(request)
+        # 非阻塞，返回True表示已发起请求
+        self.get_logger().info('[LLM ACTION] Pickup request sent')
+        return True
+
+    def action_offload(self) -> bool:
+        """Atomic action: Offload the barrel."""
+        if not self.has_barrel:
+            return False
+        request = ItemRequest.Request()
+        request.robot_id = self.robot_name
+        future = self.offload_client.call_async(request)
+        self.get_logger().info('[LLM ACTION] Offload request sent')
+        return True
+
+    # ==================== LLM DIRECT CONTROL ====================
+
+    def _llm_direct_control_loop(self):
+        """LLM直接控制循环 - 完全绕过状态机。
+
+        每隔llm_control_interval个tick查询一次LLM，
+        LLM根据传感器数据直接发送运动指令。
+        """
+        self.llm_counter += 1
+
+        # 日志（每秒一次）
+        if self.llm_counter % 10 == 0:
+            barrels = self.get_target_barrels()
+            barrel_info = "None"
+            if barrels:
+                b = barrels[0]
+                barrel_info = f"size={b.size:.0f} x={b.x:.0f}"
+            self.get_logger().info(
+                f'[LLM CTRL] pos=({self.map_x:.1f},{self.map_y:.1f}) '
+                f'front={self.front_min_dist:.2f}m barrel={barrel_info} '
+                f'has_barrel={self.has_barrel} collected={self.collected_count}'
+            )
+
+        # 每隔llm_control_interval个tick查询LLM
+        if self.llm_counter % self.llm_control_interval != 0:
+            return
+
+        # 获取当前状态
+        status = self.get_robot_status()
+
+        # 查询LLM
+        action = self.llm.decide_next_action(
+            current_state="LLM_DIRECT_CONTROL",
+            robot_position=status['position'],
+            robot_yaw=status['yaw'],
+            visible_barrels=status['visible_barrels'],
+            visible_zones=status['visible_zones'],
+            has_barrel=status['has_barrel'],
+            collected_count=status['collected_count'],
+            radiation_level=status['radiation_level'],
+            sensor_data=status['sensor_data'],
+            nav_active=False,
+            waypoint_idx=0
+        )
+
+        if action is None:
+            # API调用失败或限流，保持上一个动作或停止
+            return
+
+        self.last_llm_action = action
+        self.get_logger().info(f'[LLM CTRL] Action: {action}')
+
+        # 执行LLM的指令
+        self._execute_llm_action(action)
+
+    def _execute_llm_action(self, action: str):
+        """执行LLM的动作指令。"""
+        # 直接运动控制
+        motion_commands = {
+            "FORWARD": (0.2, 0.0),
+            "FORWARD_SLOW": (0.1, 0.0),
+            "FORWARD_FAST": (0.3, 0.0),
+            "BACKWARD": (-0.15, 0.0),
+            "BACKWARD_SLOW": (-0.1, 0.0),
+            "TURN_LEFT": (0.0, 0.5),
+            "TURN_RIGHT": (0.0, -0.5),
+            "TURN_LEFT_SLOW": (0.0, 0.3),
+            "TURN_RIGHT_SLOW": (0.0, -0.3),
+            "TURN_LEFT_FAST": (0.0, 0.8),
+            "TURN_RIGHT_FAST": (0.0, -0.8),
+            "FORWARD_LEFT": (0.15, 0.3),
+            "FORWARD_RIGHT": (0.15, -0.3),
+            "BACKWARD_LEFT": (-0.1, 0.3),
+            "BACKWARD_RIGHT": (-0.1, -0.3),
+            "STOP": (0.0, 0.0),
+        }
+
+        if action in motion_commands:
+            linear, angular = motion_commands[action]
+            twist = Twist()
+            twist.linear.x = linear
+            twist.angular.z = angular
+            self.cmd_vel_pub.publish(twist)
+            return
+
+        # 服务调用
+        if action == "PICKUP":
+            self._do_pickup()
+        elif action == "OFFLOAD":
+            self._do_offload()
+        elif action == "DECONTAMINATE_SERVICE":
+            self._do_decontaminate()
+
+    def _do_pickup(self):
+        """执行pickup服务调用。"""
+        if self.has_barrel:
+            self.get_logger().warn('[LLM] Already have barrel, cannot pickup')
+            return
+
+        request = ItemRequest.Request()
+        request.robot_id = self.robot_name
+        future = self.pickup_client.call_async(request)
+        future.add_done_callback(self._pickup_done_callback)
+        self.get_logger().info('[LLM] Pickup service called')
+
+    def _pickup_done_callback(self, future):
+        """Pickup完成回调。"""
+        try:
+            result = future.result()
+            if result and result.success:
+                self.has_barrel = True
+                self.collected_count += 1
+                self.set_lidar_mask('rear')  # 屏蔽后方雷达
+                self.llm.log_event("barrel_collected", {
+                    "count": self.collected_count,
+                    "position": (self.map_x, self.map_y)
+                })
+                self.get_logger().info(f'[LLM] PICKUP SUCCESS! Total: {self.collected_count}')
+            else:
+                self.get_logger().info('[LLM] Pickup failed')
+        except Exception as e:
+            self.get_logger().error(f'[LLM] Pickup error: {e}')
+
+    def _do_offload(self):
+        """执行offload服务调用。"""
+        if not self.has_barrel:
+            self.get_logger().warn('[LLM] No barrel to offload')
+            return
+
+        request = ItemRequest.Request()
+        request.robot_id = self.robot_name
+        future = self.offload_client.call_async(request)
+        future.add_done_callback(self._offload_done_callback)
+        self.get_logger().info('[LLM] Offload service called')
+
+    def _offload_done_callback(self, future):
+        """Offload完成回调。"""
+        try:
+            result = future.result()
+            if result and result.success:
+                self.has_barrel = False
+                self.set_lidar_mask('none')  # 关闭雷达屏蔽
+                self.llm.log_event("barrel_delivered", {
+                    "total": self.collected_count,
+                    "position": (self.map_x, self.map_y)
+                })
+                self.get_logger().info(f'[LLM] OFFLOAD SUCCESS!')
+            else:
+                self.get_logger().info('[LLM] Offload failed - not in green zone?')
+        except Exception as e:
+            self.get_logger().error(f'[LLM] Offload error: {e}')
+
+    def _do_decontaminate(self):
+        """执行decontaminate服务调用。"""
+        request = ItemRequest.Request()
+        request.robot_id = self.robot_name
+        future = self.decontam_client.call_async(request)
+        future.add_done_callback(self._decontam_done_callback)
+        self.get_logger().info('[LLM] Decontaminate service called')
+
+    def _decontam_done_callback(self, future):
+        """Decontaminate完成回调。"""
+        try:
+            result = future.result()
+            if result and result.success:
+                self.llm.log_event("decontaminated", {"position": (self.map_x, self.map_y)})
+                self.get_logger().info('[LLM] DECONTAMINATE SUCCESS!')
+            else:
+                self.get_logger().info('[LLM] Decontaminate failed - not in cyan zone?')
+        except Exception as e:
+            self.get_logger().error(f'[LLM] Decontaminate error: {e}')
 
     def _check_llm_decision(self) -> bool:
         """Check if LLM wants to override current behavior.
@@ -1143,25 +1335,19 @@ class CleanerBot(Node):
         if not self.startup_complete:
             return
 
+        # ========== LLM DIRECT CONTROL MODE ==========
+        # 当启用LLM直接控制时，完全绕过状态机，由LLM根据传感器数据直接控制
+        if self.llm_enabled and self.llm_direct_control:
+            self._llm_direct_control_loop()
+            return
+
+        # ========== 以下是传统状态机模式 ==========
         # Priority: Radiation check (skip if already going to/at cyan, or going to green after decontam)
         if (self.current_radiation > self.RADIATION_THRESHOLD and
             self.state not in [State.NAVIGATING_TO_CYAN, State.DECONTAMINATING, State.NAVIGATING_TO_GREEN, State.DELIVERING]):
             self.get_logger().warn(f'High radiation! {self.current_radiation:.1f}')
             self.cancel_navigation()
             self.state = State.NAVIGATING_TO_CYAN
-
-        # LLM decision checkpoint - check in most states except time-critical ones
-        # Don't interrupt: RAMMING (pickup in progress), RECOVER_LOCALIZATION (AMCL fix),
-        # DELIVERING/DECONTAMINATING (service calls in progress)
-        interruptible_states = [
-            State.SEARCHING, State.SCANNING, State.IDLE,
-            State.APPROACHING, State.NAVIGATING_TO_GREEN, State.NAVIGATING_TO_CYAN,
-            State.POST_DELIVER_REPOSITION, State.APPROACH_REPOSITION
-        ]
-        if self.state in interruptible_states:
-            if self._check_llm_decision():
-                # LLM took control, skip normal state machine this tick
-                return
 
         # Log state occasionally (every second)
         if hasattr(self, '_loop_count'):
