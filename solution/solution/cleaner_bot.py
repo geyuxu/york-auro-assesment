@@ -8,9 +8,12 @@ Only use direct cmd_vel for the final "ramming" phase when very close.
 State Machine:
 1. SEARCHING: Nav2 patrol waypoints, watch for big red blobs
 2. APPROACHING: Nav2 to barrel location (estimated from camera)
-3. RAMMING: Direct forward motion to drive through barrel
-4. NAVIGATING_TO_GREEN: Nav2 to delivery zone
-5. DELIVERING: Call offload service
+3. RAMMING: Direct forward motion to drive through barrel + pickup
+4. NAVIGATING_TO_GREEN: Nav2 to delivery zone (GREEN)
+5. DELIVERING: Call offload service to drop barrel
+6. NAVIGATING_TO_CYAN: Nav2 to decontamination zone (CYAN)
+7. DECONTAMINATING: Call decontaminate service
+8. Back to SEARCHING
 """
 
 import math
@@ -23,6 +26,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallb
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, QoSPresetProfiles
 from rclpy.action import ActionClient
 from action_msgs.msg import GoalStatus
+from std_srvs.srv import Empty
 
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
@@ -195,7 +199,7 @@ class CleanerBot(Node):
 
         # 导航超时检测
         self.nav_start_time = None
-        self.NAV_TIMEOUT = 60.0  # 60秒没到达就跳过这个巡视点
+        self.NAV_TIMEOUT = 180.0  # 180秒没到达就跳过这个巡视点
 
         # 防止重复发送导航目标
         self.last_nav_goal_time = None
@@ -204,8 +208,8 @@ class CleanerBot(Node):
         # Zone locations (Gazebo世界坐标，地图已旋转对齐)
         # self.cyan_zone_approx = (7.5, 9.4)     # 消毒区
         # self.green_zone_approx = (13.5, 9.4)   # 交付区A
-        self.cyan_zone_approx = (-9, -11)     # 消毒区
-        self.green_zone_approx = (-14, -11)   # 交付区A
+        self.cyan_zone_approx = (-9.3, -12.0)     # 消毒区
+        self.green_zone_approx = (-15.0, -12.0)   # 交付区A
 
         # Publishers
         cmd_vel_topic = f'{self.robot_namespace}/cmd_vel'
@@ -276,6 +280,14 @@ class CleanerBot(Node):
                 self.use_nav2 = False
             else:
                 self.get_logger().info('Nav2 ready!')
+
+        # Costmap clear service clients
+        self.clear_global_costmap_client = self.create_client(
+            Empty, f'{self.robot_namespace}/global_costmap/clear_entirely_global_costmap',
+            callback_group=self.service_callback_group)
+        self.clear_local_costmap_client = self.create_client(
+            Empty, f'{self.robot_namespace}/local_costmap/clear_entirely_local_costmap',
+            callback_group=self.service_callback_group)
 
         # Control timer
         self.control_timer = self.create_timer(
@@ -569,18 +581,18 @@ class CleanerBot(Node):
             self.get_logger().info('Enabling front LiDAR mask (330-30°) for barrel')
 
         elif sector == 'rear':
-            # Mask rear sector: 150° to 210° (barrel behind robot)
+            # Mask rear sector: 120° to 240° (barrel behind robot, wider range)
             start_param = Parameter()
             start_param.name = 'ignore_sector_start'
             start_param.value = ParameterValue()
             start_param.value.type = ParameterType.PARAMETER_DOUBLE
-            start_param.value.double_value = 150.0
+            start_param.value.double_value = 120.0
 
             end_param = Parameter()
             end_param.name = 'ignore_sector_end'
             end_param.value = ParameterValue()
             end_param.value.type = ParameterType.PARAMETER_DOUBLE
-            end_param.value.double_value = 210.0
+            end_param.value.double_value = 240.0
 
             mask_param = Parameter()
             mask_param.name = 'mask_enabled'
@@ -589,7 +601,7 @@ class CleanerBot(Node):
             mask_param.value.bool_value = True
 
             request.parameters = [start_param, end_param, mask_param]
-            self.get_logger().info('Enabling rear LiDAR mask (150-210°) for barrel')
+            self.get_logger().info('Enabling rear LiDAR mask (120-240°) for barrel')
 
         else:  # 'none' or any other value
             # Disable mask
@@ -603,6 +615,14 @@ class CleanerBot(Node):
             self.get_logger().info('Disabling LiDAR mask')
 
         self.dynamic_mask_param_client.call_async(request)
+
+    def clear_costmaps(self):
+        """Clear both global and local costmaps."""
+        self.get_logger().info('Clearing costmaps...')
+        if self.clear_global_costmap_client.service_is_ready():
+            self.clear_global_costmap_client.call_async(Empty.Request())
+        if self.clear_local_costmap_client.service_is_ready():
+            self.clear_local_costmap_client.call_async(Empty.Request())
 
     def send_nav_goal(self, x, y, yaw=0.0):
         if not self.use_nav2:
@@ -674,9 +694,9 @@ class CleanerBot(Node):
         if not self.startup_complete:
             return
 
-        # Priority: Radiation check
+        # Priority: Radiation check (skip if already going to/at cyan, or going to green after decontam)
         if (self.current_radiation > self.RADIATION_THRESHOLD and
-            self.state not in [State.NAVIGATING_TO_CYAN, State.DECONTAMINATING]):
+            self.state not in [State.NAVIGATING_TO_CYAN, State.DECONTAMINATING, State.NAVIGATING_TO_GREEN, State.DELIVERING]):
             self.get_logger().warn(f'High radiation! {self.current_radiation:.1f}')
             self.cancel_navigation()
             self.state = State.NAVIGATING_TO_CYAN
@@ -886,6 +906,7 @@ class CleanerBot(Node):
                 wp = self.search_waypoints[self.current_waypoint_idx]
                 self.get_logger().warn(f'Nav timeout ({elapsed:.0f}s) for waypoint {self.current_waypoint_idx + 1} ({wp[0]}, {wp[1]}), skipping!')
                 self.cancel_navigation()
+                self.clear_costmaps()  # 清除可能的错误障碍物
                 self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
                 self.nav_start_time = None
                 return
@@ -904,6 +925,7 @@ class CleanerBot(Node):
                 self.get_logger().info(f'Arrived at waypoint {self.current_waypoint_idx + 1}, starting left-right scan')
                 self.scan_start_yaw = self.map_yaw
                 self.scan_phase = 0  # 从向左转开始
+                self.scan_counter = 0  # 重置扫描计数器
                 delattr(self, '_nav_goal_reached')  # 清除标记，下次需要重新导航
                 self.state = State.SCANNING
             else:
@@ -925,6 +947,17 @@ class CleanerBot(Node):
         扫描完成后，前进到下一个巡视点。
         """
         SCAN_ANGLE = math.radians(25)  # 扫描角度25度
+
+        # 扫描超时保护（20秒）
+        if not hasattr(self, 'scan_counter'):
+            self.scan_counter = 0
+        self.scan_counter += 1
+        if self.scan_counter > 200:  # 20秒超时
+            self.get_logger().warn('SCANNING timeout, moving to next waypoint')
+            self.scan_counter = 0
+            self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
+            self.state = State.SEARCHING
+            return
 
         red_barrels = self.get_red_barrels()
 
@@ -1110,8 +1143,13 @@ class CleanerBot(Node):
             self.get_logger().warn(f'RAMMING: Phase 2 timeout ({self.ram_counter} ticks), abandoning barrel')
             self.stop_robot()
             self.set_lidar_mask('none')
+            self.clear_costmaps()  # 清除RAMMING期间积累的错误障碍物
             if hasattr(self, 'ram_start_yaw'):
                 del self.ram_start_yaw
+            if hasattr(self, 'ram_last_yaw'):
+                del self.ram_last_yaw
+            if hasattr(self, 'ram_total_rotated'):
+                del self.ram_total_rotated
             self.state = State.SEARCHING
             return
 
@@ -1119,6 +1157,7 @@ class CleanerBot(Node):
             self.get_logger().warn(f'RAMMING: Phase 4 timeout ({self.ram_counter} ticks), abandoning barrel')
             self.stop_robot()
             self.set_lidar_mask('none')
+            self.clear_costmaps()  # 清除RAMMING期间积累的错误障碍物
             self.state = State.SEARCHING
             return
 
@@ -1206,25 +1245,32 @@ class CleanerBot(Node):
                 self.ram_phase = 2
                 self.turn_counter = 0
 
-        # Phase 2: 旋转180度 (基于角度检测，不是时间)
+        # Phase 2: 旋转180度 (基于累积角度检测)
         elif self.ram_phase == 2:
             self.turn_counter += 1
             twist.linear.x = 0.0
             twist.angular.z = 0.8  # 左转 (逆时针)
 
-            # 记录起始角度（第一次进入时）
+            # 记录起始角度和上一次角度（第一次进入时）
             if not hasattr(self, 'ram_start_yaw'):
                 self.ram_start_yaw = self.map_yaw
+                self.ram_last_yaw = self.map_yaw
+                self.ram_total_rotated = 0.0
                 self.get_logger().info(f'RAMMING: Start rotation, initial yaw={math.degrees(self.ram_start_yaw):.1f}°')
 
-            # 计算已旋转角度
-            yaw_diff = self.map_yaw - self.ram_start_yaw
+            # 计算本次增量旋转（处理角度环绕）
+            delta_yaw = self.map_yaw - self.ram_last_yaw
             # 归一化到 -π 到 π
-            while yaw_diff > math.pi:
-                yaw_diff -= 2 * math.pi
-            while yaw_diff < -math.pi:
-                yaw_diff += 2 * math.pi
-            rotated_deg = abs(math.degrees(yaw_diff))
+            while delta_yaw > math.pi:
+                delta_yaw -= 2 * math.pi
+            while delta_yaw < -math.pi:
+                delta_yaw += 2 * math.pi
+
+            # 累加旋转量（逆时针为正）
+            self.ram_total_rotated += delta_yaw
+            self.ram_last_yaw = self.map_yaw
+
+            rotated_deg = abs(math.degrees(self.ram_total_rotated))
 
             # 每10个tick记录一次旋转进度
             if self.turn_counter % 10 == 0:
@@ -1236,6 +1282,8 @@ class CleanerBot(Node):
                 # 转完180度后，桶在后方，切换mask从front到rear
                 self.set_lidar_mask('rear')
                 del self.ram_start_yaw  # 清除起始角度
+                del self.ram_last_yaw
+                del self.ram_total_rotated
                 self.ram_phase = 3
                 self.ram_counter = 0  # 重置计数器用于刹停阶段
 
@@ -1253,7 +1301,7 @@ class CleanerBot(Node):
         elif self.ram_phase == 4:
             twist.linear.x = -0.15  # 倒车撞桶
 
-            # 简化逻辑：优先航向保持，只有极端情况才避墙
+            # 强制航向保持，忽略墙壁避让（靠rear mask屏蔽桶）
             if hasattr(self, 'ram_target_yaw'):
                 yaw_error = self.map_yaw - self.ram_target_yaw
                 # 归一化到 -π 到 π
@@ -1262,19 +1310,10 @@ class CleanerBot(Node):
                 while yaw_error < -math.pi:
                     yaw_error += 2 * math.pi
 
-                # 限制最大航向偏差为30度
-                max_yaw_error = math.radians(30)
-
-                # 墙壁避让：只有非常近时才微调，且不超过最大偏差
-                if self.left_side_min_dist < 0.25 and yaw_error > -max_yaw_error:
-                    # 左边太近，稍微右转，但不超过限制
-                    twist.angular.z = -0.2
-                elif self.right_side_min_dist < 0.25 and yaw_error < max_yaw_error:
-                    # 右边太近，稍微左转，但不超过限制
-                    twist.angular.z = 0.2
-                else:
-                    # 正常航向保持
-                    twist.angular.z = -0.5 * yaw_error
+                # 强航向保持，增益1.0
+                twist.angular.z = -1.0 * yaw_error
+                # 限制角速度
+                twist.angular.z = max(-0.5, min(0.5, twist.angular.z))
             else:
                 twist.angular.z = 0.0
 
@@ -1331,9 +1370,12 @@ class CleanerBot(Node):
         elif self.recover_phase == 2:
             twist.linear.x = 0.0
             twist.angular.z = 0.0
-            # 先去消毒区消毒，再去交付区放下
-            self.get_logger().info('RECOVER complete -> NAVIGATING_TO_CYAN (decontamination)')
-            self.state = State.NAVIGATING_TO_CYAN
+            # 清除costmap（AMCL定位修复后，基于正确位置重建）
+            self.clear_costmaps()
+            # 先去绿区放桶，再去消毒
+            self.get_logger().info('RECOVER complete -> NAVIGATING_TO_GREEN (deliver first)')
+            self.green_nav_counter = 0
+            self.state = State.NAVIGATING_TO_GREEN
 
         self.cmd_vel_pub.publish(twist)
 
@@ -1355,9 +1397,22 @@ class CleanerBot(Node):
             self.service_pending = False
             return
 
+        # 检查是否在绿区半径内（0.8米）
+        if self.position_valid:
+            dx = self.map_x - self.green_zone_approx[0]
+            dy = self.map_y - self.green_zone_approx[1]
+            dist = math.sqrt(dx*dx + dy*dy)
+            if dist < 0.8:
+                self.get_logger().info(f'Within GREEN zone radius! dist={dist:.2f}m -> DELIVERING')
+                self.cancel_navigation()
+                self.green_nav_counter = 0
+                self.state = State.DELIVERING
+                self.service_pending = False
+                return
+
         # 防止Nav2假成功导致无限循环
-        if self.green_nav_counter > 300:
-            self.get_logger().warn('Green nav timeout, forcing DELIVERING state')
+        if self.green_nav_counter > 6000:  # 600秒(10分钟)超时
+            self.get_logger().warn('Green nav timeout (10min), forcing DELIVERING state')
             self.cancel_navigation()
             self.green_nav_counter = 0
             self.state = State.DELIVERING
@@ -1366,25 +1421,15 @@ class CleanerBot(Node):
 
         # 继续导航
         if not self.is_navigation_active():
+            # 每次重发导航目标前清除costmap
+            self.clear_costmaps()
             if self.green_nav_counter % 50 == 1:
                 self.get_logger().info(f'Going to GREEN zone... counter={self.green_nav_counter}')
             self.send_nav_goal(self.green_zone_approx[0], self.green_zone_approx[1])
 
     def _handle_delivering(self):
-        """Deliver barrel at green zone."""
-        green = self.get_green_zones()
-
-        # Align with zone if visible
-        if green:
-            zone = green[0]
-            x_offset = zone.x - self.IMAGE_CENTER_X  # Convert to offset from center
-            if abs(x_offset) > 50:
-                twist = Twist()
-                twist.angular.z = -0.003 * x_offset
-                self.cmd_vel_pub.publish(twist)
-                return
-
-        # Try offload
+        """Deliver barrel at green zone - 进入绿区就放下桶."""
+        # 检查服务调用结果
         if self.service_pending and self.service_future is not None:
             if self.service_future.done():
                 result = self.service_future.result()
@@ -1392,22 +1437,17 @@ class CleanerBot(Node):
                     self.get_logger().info(f'DELIVERED! Total: {self.collected_count}')
                     self.has_barrel = False
                     self.stop_robot()
-                    # Disable rear LiDAR mask since barrel is gone
                     self.set_lidar_mask('none')
-                    # 交付完成后，找最近的巡视点继续搜索（避免绕远路）
-                    self._select_nearest_waypoint()
-                    self.waypoint_before_pickup = None
-                    self.state = State.SEARCHING
-                else:
-                    # Move forward and retry
-                    twist = Twist()
-                    twist.linear.x = 0.1
-                    self.cmd_vel_pub.publish(twist)
+                    # 放完桶后去消毒
+                    self.cyan_nav_counter = 0
+                    self.get_logger().info('Barrel delivered -> NAVIGATING_TO_CYAN (decontaminate)')
+                    self.state = State.NAVIGATING_TO_CYAN
                 self.service_pending = False
                 self.service_future = None
             return
 
-        # Start service call
+        # 直接调用offload服务
+        self.get_logger().info('Calling /offload_item service...')
         request = ItemRequest.Request()
         request.robot_id = self.robot_name
         self.service_future = self.offload_client.call_async(request)
@@ -1431,10 +1471,23 @@ class CleanerBot(Node):
             self.service_pending = False
             return
 
+        # 检查是否在消毒区半径内（0.8米）
+        if self.position_valid:
+            dx = self.map_x - self.cyan_zone_approx[0]
+            dy = self.map_y - self.cyan_zone_approx[1]
+            dist = math.sqrt(dx*dx + dy*dy)
+            if dist < 0.8:
+                self.get_logger().info(f'Within CYAN zone radius! dist={dist:.2f}m -> DECONTAMINATING')
+                self.cancel_navigation()
+                self.cyan_nav_counter = 0
+                self.state = State.DECONTAMINATING
+                self.service_pending = False
+                return
+
         # 防止Nav2假成功导致无限循环：如果导航很快就"成功"但没看到zone，继续等待
-        # 最多等待300个tick（30秒），之后强制进入DECONTAMINATING尝试调用服务
-        if self.cyan_nav_counter > 300:
-            self.get_logger().warn('Cyan nav timeout, forcing DECONTAMINATING state')
+        # 最多等待6000个tick（600秒=10分钟），之后强制进入DECONTAMINATING尝试调用服务
+        if self.cyan_nav_counter > 6000:  # 600秒(10分钟)超时
+            self.get_logger().warn('Cyan nav timeout (10min), forcing DECONTAMINATING state')
             self.cancel_navigation()
             self.cyan_nav_counter = 0
             self.state = State.DECONTAMINATING
@@ -1443,7 +1496,8 @@ class CleanerBot(Node):
 
         # 继续导航（即使Nav2报成功也继续发送，直到看到zone或超时）
         if not self.is_navigation_active():
-            # 每50个tick才发一次导航目标，避免刷屏
+            # 每次重发导航目标前清除costmap
+            self.clear_costmaps()
             if self.cyan_nav_counter % 50 == 1:
                 self.get_logger().info(f'Going to CYAN zone... counter={self.cyan_nav_counter}')
             self.send_nav_goal(self.cyan_zone_approx[0], self.cyan_zone_approx[1])
@@ -1454,41 +1508,31 @@ class CleanerBot(Node):
         if not hasattr(self, 'decontam_retry_count'):
             self.decontam_retry_count = 0
 
-        cyan = self.get_cyan_zones()
-
-        # 如果能看到cyan zone，先对准
-        if cyan:
-            zone = cyan[0]
-            x_offset = zone.x - self.IMAGE_CENTER_X
-            if abs(x_offset) > 50:
-                twist = Twist()
-                twist.angular.z = -0.003 * x_offset
-                self.cmd_vel_pub.publish(twist)
-                return
-
         # 检查服务调用结果
         if self.service_pending and self.service_future is not None:
             if self.service_future.done():
                 result = self.service_future.result()
                 if result and result.success:
-                    self.get_logger().info('DECONTAMINATED! -> NAVIGATING_TO_GREEN')
                     self.stop_robot()
                     self.decontam_retry_count = 0  # 重置计数器
-                    if self.has_barrel:
-                        self.state = State.NAVIGATING_TO_GREEN
-                    else:
-                        self.state = State.SEARCHING
+                    # 消毒成功，继续搜索下一个桶
+                    self.get_logger().info('DECONTAMINATED! -> SEARCHING')
+                    self._select_nearest_waypoint()
+                    self.waypoint_before_pickup = None
+                    self.state = State.SEARCHING
                 else:
                     # 消毒失败，记录并重试
                     self.decontam_retry_count += 1
                     msg = result.message if result else "No result"
                     self.get_logger().warn(f'Decontaminate failed ({self.decontam_retry_count}): {msg}')
 
-                    # 如果重试超过10次，强制前进到绿色区域
+                    # 如果重试超过10次，强制继续搜索
                     if self.decontam_retry_count >= 10:
-                        self.get_logger().warn('Decontaminate failed 10 times, proceeding to GREEN zone anyway')
+                        self.get_logger().warn('Decontaminate failed 10 times, proceeding to SEARCHING anyway')
                         self.decontam_retry_count = 0
-                        self.state = State.NAVIGATING_TO_GREEN
+                        self._select_nearest_waypoint()
+                        self.waypoint_before_pickup = None
+                        self.state = State.SEARCHING
                     else:
                         # 向前移动一点再重试
                         twist = Twist()
