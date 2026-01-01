@@ -172,6 +172,9 @@ class LLMInterface:
         has_barrel: bool,
         collected_count: int,
         radiation_level: float,
+        sensor_data: Dict[str, float] = None,
+        nav_active: bool = False,
+        waypoint_idx: int = 0,
     ) -> Optional[str]:
         """Ask LLM to decide the next action based on current situation.
 
@@ -184,6 +187,9 @@ class LLMInterface:
             has_barrel: Whether robot is carrying a barrel
             collected_count: Number of barrels collected so far
             radiation_level: Current radiation level
+            sensor_data: LiDAR distances {front, left, right, rear, front_left, front_right}
+            nav_active: Whether Nav2 navigation is currently active
+            waypoint_idx: Current waypoint index in patrol
 
         Returns:
             Optional action string, or None to use default behavior
@@ -191,40 +197,100 @@ class LLMInterface:
         if not self.is_available():
             return None
 
-        system_prompt = """You are a robot control assistant for a barrel collection robot.
-The robot collects colored barrels and delivers them to green zones.
-Red barrels are contaminated and cause radiation when carried.
+        if sensor_data is None:
+            sensor_data = {}
 
-You must respond with ONLY ONE of these actions:
-- CONTINUE: Continue with default state machine behavior
-- SEARCH: Go search for barrels
-- APPROACH: Approach the nearest visible barrel
-- DELIVER: Navigate to green zone to deliver barrel
-- DECONTAMINATE: Go to cyan zone to reduce radiation
-- WAIT: Stop and wait (use sparingly)
+        system_prompt = """You are a robot control assistant for a TurtleBot3 barrel collection robot.
 
-Respond with just the action name, nothing else."""
+TASK: Collect colored barrels (red=contaminated, blue=normal) and deliver them to GREEN zones.
+- Red barrels cause radiation when carried - need decontamination at CYAN zone
+- Robot has LiDAR (360°) and camera for sensing
+- Navigation uses Nav2 stack with pre-built map
 
+SENSOR DATA:
+- LiDAR distances in meters (front/left/right/rear/front_left/front_right)
+- Camera detects barrels and zones with pixel size (larger = closer)
+- Image center x=320, barrel x<320 is left, x>320 is right
+
+STATE MACHINE STATES:
+- SEARCHING: Patrolling waypoints looking for barrels
+- SCANNING: Rotating at waypoint to scan for barrels
+- APPROACHING: Moving toward detected barrel
+- RAMMING: Final push to collect barrel (critical, don't interrupt)
+- NAVIGATING_TO_GREEN: Delivering barrel to green zone
+- NAVIGATING_TO_CYAN: Going to decontaminate
+- DELIVERING/DECONTAMINATING: Service calls in progress
+
+ACTIONS (respond with ONE):
+- CONTINUE: Let default state machine handle it (recommended most of time)
+- SEARCH: Force return to searching state
+- APPROACH: Approach visible barrel (only if barrels visible)
+- DELIVER: Go to green zone (only if carrying barrel)
+- DECONTAMINATE: Go to cyan zone (if radiation high)
+- WAIT: Stop and wait (emergency only)
+
+DECISION GUIDELINES:
+1. If barrel visible (size>3000) and not carrying one -> APPROACH
+2. If carrying barrel -> CONTINUE (let it deliver)
+3. If radiation > 50 and not carrying barrel -> DECONTAMINATE
+4. If front distance < 0.3m -> might be stuck, CONTINUE to let recovery handle
+5. Most of time -> CONTINUE (trust the state machine)
+
+Respond with ONLY the action name."""
+
+        # Format barrel info with full details
         barrels_str = "None visible"
         if visible_barrels:
-            barrels_str = ", ".join([f"{b.get('color', 'unknown')} (size={b.get('size', 0):.0f})" for b in visible_barrels[:3]])
+            barrel_details = []
+            for i, b in enumerate(visible_barrels[:5]):
+                color = b.get('color', 'unknown')
+                size = b.get('size', 0)
+                x = b.get('x', 320)
+                offset = "center" if abs(x - 320) < 50 else ("left" if x < 320 else "right")
+                barrel_details.append(f"  [{i}] {color}: size={size:.0f}, x={x:.0f} ({offset})")
+            barrels_str = "\n" + "\n".join(barrel_details)
 
+        # Format zone info
         zones_str = "None visible"
         if visible_zones:
-            zones_str = ", ".join([f"{z.get('color', 'unknown')} (size={z.get('size', 0):.0f})" for z in visible_zones[:3]])
+            zone_details = []
+            for z in visible_zones[:3]:
+                color = z.get('color', 'unknown')
+                size = z.get('size', 0)
+                zone_details.append(f"  {color}: size={size:.0f}")
+            zones_str = "\n" + "\n".join(zone_details)
+
+        # Format sensor data
+        sensor_str = "No data"
+        if sensor_data:
+            sensor_str = f"""
+  front: {sensor_data.get('front', 10):.2f}m
+  front_left: {sensor_data.get('front_left', 10):.2f}m
+  front_right: {sensor_data.get('front_right', 10):.2f}m
+  left: {sensor_data.get('left', 10):.2f}m
+  right: {sensor_data.get('right', 10):.2f}m
+  rear: {sensor_data.get('rear', 10):.2f}m"""
 
         import math
-        user_prompt = f"""Current situation:
-- State: {current_state}
-- Position: ({robot_position[0]:.1f}, {robot_position[1]:.1f})
-- Yaw: {math.degrees(robot_yaw):.0f}°
-- Carrying barrel: {has_barrel}
-- Barrels collected: {collected_count}
-- Radiation level: {radiation_level:.1f}
-- Visible barrels: {barrels_str}
-- Visible zones: {zones_str}
+        user_prompt = f"""=== ROBOT STATUS ===
+State: {current_state}
+Position: ({robot_position[0]:.2f}, {robot_position[1]:.2f}) m
+Yaw: {math.degrees(robot_yaw):.1f}°
+Nav2 Active: {nav_active}
+Waypoint: {waypoint_idx}
 
-Recent events:
+=== TASK STATUS ===
+Carrying barrel: {has_barrel}
+Barrels collected: {collected_count}
+Radiation level: {radiation_level:.1f}/100
+
+=== LIDAR (distances in meters) ==={sensor_str}
+
+=== CAMERA (visible objects) ===
+Barrels: {barrels_str}
+Zones: {zones_str}
+
+=== RECENT EVENTS ===
 {self._get_recent_events_summary()}
 
 What action should the robot take?"""
@@ -496,11 +562,15 @@ def decide_next_action(
     has_barrel: bool,
     collected_count: int,
     radiation_level: float,
+    sensor_data: Dict[str, float] = None,
+    nav_active: bool = False,
+    waypoint_idx: int = 0,
 ) -> Optional[str]:
     """Ask LLM to decide the next action. See LLMInterface.decide_next_action for details."""
     return get_llm_interface().decide_next_action(
         current_state, robot_position, robot_yaw, visible_barrels,
-        visible_zones, has_barrel, collected_count, radiation_level
+        visible_zones, has_barrel, collected_count, radiation_level,
+        sensor_data, nav_active, waypoint_idx
     )
 
 

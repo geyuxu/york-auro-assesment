@@ -628,7 +628,7 @@ class CleanerBot(Node):
         # Get current status
         status = self.get_robot_status()
 
-        # Query LLM for decision
+        # Query LLM for decision with full sensor data
         action = self.llm.decide_next_action(
             current_state=status['state'],
             robot_position=status['position'],
@@ -637,7 +637,10 @@ class CleanerBot(Node):
             visible_zones=status['visible_zones'],
             has_barrel=status['has_barrel'],
             collected_count=status['collected_count'],
-            radiation_level=status['radiation_level']
+            radiation_level=status['radiation_level'],
+            sensor_data=status['sensor_data'],
+            nav_active=status['nav_active'],
+            waypoint_idx=status['waypoint_idx']
         )
 
         if action is None or action == "CONTINUE":
