@@ -137,6 +137,8 @@ class CleanerBot(Node):
         self.nav_path_points = []  # Nav2规划的路径点列表 (NOT search_waypoints!)
         self.nav_path_idx = 0  # 当前跟随的路径点索引
         self.use_direct_drive = True  # 使用直接驾驶跟随路径（而不是让Nav2控制）
+        # 预规划路径（RAMMING时预先规划到GREEN的路径）
+        self.preplanned_green_path = []  # 预规划的到GREEN的路径
 
         # Stuck detection
         self.last_pos_x = 0.0
@@ -395,10 +397,6 @@ class CleanerBot(Node):
         if not msg.poses:
             return
 
-        # 如果已经有路径正在跟随，忽略新路径（避免不断重置）
-        if self.nav_path_points and self.nav_path_idx < len(self.nav_path_points):
-            return
-
         # 从Path消息中提取路径点，保证最小间距0.5米
         MIN_POINT_DIST = 0.5
         path_points = []
@@ -424,6 +422,16 @@ class CleanerBot(Node):
         final_point = (last_pose.position.x, last_pose.position.y)
         if not path_points or path_points[-1] != final_point:
             path_points.append(final_point)
+
+        # 如果正在预规划（RAMMING状态），保存为预规划路径
+        if getattr(self, '_preplan_pending', False):
+            self.preplanned_green_path = path_points
+            self.get_logger().info(f'Preplanned path to GREEN saved: {len(path_points)} points')
+            return
+
+        # 如果已经有路径正在跟随，忽略新路径（避免不断重置）
+        if self.nav_path_points and self.nav_path_idx < len(self.nav_path_points):
+            return
 
         self.nav_path_points = path_points
         self.nav_path_idx = 0
@@ -757,6 +765,48 @@ class CleanerBot(Node):
         self.nav_start_time = self.get_clock().now()  # 记录导航开始时间
         return True
 
+    def preplan_path_to_green(self):
+        """预规划到GREEN区域的路径（在RAMMING时调用，pickup成功后直接使用）
+
+        发送Nav2请求获取路径，路径通过plan_callback保存，然后立即取消导航。
+        """
+        if not self.use_nav2:
+            return
+
+        self.preplanned_green_path = []  # 清空旧的预规划
+        self._preplan_pending = True  # 标记正在预规划
+
+        # 发送到GREEN的导航请求
+        goal_msg = NavigateToPose.Goal()
+        goal_msg.pose.header.frame_id = 'map'
+        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.pose.pose.position.x = float(self.green_zone_approx[0])
+        goal_msg.pose.pose.position.y = float(self.green_zone_approx[1])
+        goal_msg.pose.pose.orientation.w = 1.0
+
+        self.get_logger().info(f'Preplanning path to GREEN: ({self.green_zone_approx[0]:.1f}, {self.green_zone_approx[1]:.1f})')
+        future = self.nav_client.send_goal_async(goal_msg)
+        future.add_done_callback(self._preplan_goal_response)
+
+    def _preplan_goal_response(self, future):
+        """预规划的goal响应回调，收到后立即取消导航"""
+        goal_handle = future.result()
+        if goal_handle.accepted:
+            self.get_logger().info('Preplan goal accepted, canceling navigation (keeping path only)')
+            # 保存goal handle用于取消
+            self._preplan_goal_handle = goal_handle
+            # 立即取消导航，只保留规划的路径
+            cancel_future = goal_handle.cancel_goal_async()
+            cancel_future.add_done_callback(self._preplan_cancel_done)
+        else:
+            self.get_logger().warn('Preplan goal rejected')
+            self._preplan_pending = False
+
+    def _preplan_cancel_done(self, future):
+        """预规划取消完成的回调"""
+        self.get_logger().info('Preplan navigation canceled, path saved for later use')
+        self._preplan_pending = False
+
     def _nav_goal_response(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
@@ -952,19 +1002,22 @@ class CleanerBot(Node):
         wp = self.search_waypoints[self.current_waypoint_idx]
         dist_to_wp = math.sqrt((self.map_x - wp[0])**2 + (self.map_y - wp[1])**2)
 
-        # 在SEARCHING状态完全禁用桶检测，只在SCANNING状态（到达巡视点后旋转扫描）时检测
-        # 这样可以避免机器人在导航途中被桶干扰，卡在墙边
-        near_waypoint = False  # 禁用SEARCHING状态的桶检测
-
+        # SEARCHING状态的桶检测：只响应非常近的桶（size > 5000）
+        # 这样避免被远处的桶干扰，但近距离遇到桶时能及时响应
         red_barrels = self.get_target_barrels()
 
-        # 只有靠近巡航点时才响应桶
-        if red_barrels and near_waypoint:
+        # 过滤出足够大（足够近）的桶
+        close_barrels = [b for b in red_barrels if b.size > 5000]
+
+        if close_barrels:
             # 选择最佳桶：优先选择居中且较大的桶
             def barrel_score(b):
                 x_offset = abs(b.x - self.IMAGE_CENTER_X)
                 return b.size - x_offset * 10
-            best = max(red_barrels, key=barrel_score)
+            best = max(close_barrels, key=barrel_score)
+
+            # 桶已经够大（>5000），直接处理
+            self.get_logger().info(f'SEARCHING: Close barrel detected! size={best.size:.0f}')
 
             # Start approaching when barrel is visible and big enough
             if best.size > self.BARREL_SIZE_START:
@@ -982,6 +1035,8 @@ class CleanerBot(Node):
                         self.ram_phase = 0
                         self.turn_counter = 0
                         self.lost_sight_counter = 0
+                        # 预规划到GREEN的路径，pickup成功后直接用
+                        self.preplan_path_to_green()
                         self.state = State.RAMMING
                         return
                     else:
@@ -1453,6 +1508,8 @@ class CleanerBot(Node):
                 self.ram_phase = 0
                 self.turn_counter = 0
                 self.lost_sight_counter = 0
+                # 预规划到GREEN的路径，pickup成功后直接用
+                self.preplan_path_to_green()
                 self.state = State.RAMMING
                 return
 
@@ -1636,6 +1693,7 @@ class CleanerBot(Node):
             self.stop_robot()
             self.set_lidar_mask('none')
             self.clear_costmaps(reset_obstacle_layer=True)  # 彻底清除RAMMING期间积累的幽灵障碍物
+            self.preplanned_green_path = []  # 清空预规划路径
             if hasattr(self, 'ram_start_yaw'):
                 del self.ram_start_yaw
             if hasattr(self, 'ram_last_yaw'):
@@ -1652,6 +1710,7 @@ class CleanerBot(Node):
             self.set_lidar_mask('none')
             self.clear_costmaps(reset_obstacle_layer=True)  # 彻底清除RAMMING期间积累的幽灵障碍物
             self.nav_path_points = []  # 清空路径
+            self.preplanned_green_path = []  # 清空预规划路径
             self.state = State.SEARCHING
             return
 
@@ -1869,6 +1928,10 @@ class CleanerBot(Node):
 
         # Phase 0: 直行离开桶堆区域，用视觉/LiDAR前方检测避障
         if self.recover_phase == 0:
+            # 每秒清除一次costmap，防止桶产生的幽灵障碍累积
+            if self.recover_counter % 10 == 1:
+                self.clear_costmaps(reset_obstacle_layer=True)
+
             # 前方有障碍，减速或绕行
             if self.front_min_dist < 0.4:
                 # 前方太近，转向避开
@@ -1887,10 +1950,12 @@ class CleanerBot(Node):
             # 前进约5秒（50 ticks）离开桶堆区域
             if self.recover_counter >= 50:
                 self.get_logger().info('RECOVER: Forward exit done, starting spin for AMCL')
+                # 旋转时不移动，关闭雷达屏蔽让AMCL获得完整数据
+                self.set_lidar_mask('none')
                 self.recover_phase = 1
                 self.recover_counter = 0
 
-        # Phase 1: Spin 360° to let AMCL see room walls
+        # Phase 1: Spin 360° to let AMCL see room walls (雷达已关闭屏蔽)
         elif self.recover_phase == 1:
             twist.linear.x = 0.0
             twist.angular.z = 0.6  # Spin for AMCL sampling
@@ -1906,8 +1971,16 @@ class CleanerBot(Node):
             twist.angular.z = 0.0
             # 彻底清除costmap（AMCL定位修复后，基于正确位置重建）
             self.clear_costmaps(reset_obstacle_layer=True)
-            # 先去绿区放桶，再去消毒
-            self.get_logger().info('RECOVER complete -> NAVIGATING_TO_GREEN (deliver first)')
+            # 要开始拖桶走了，重新开启后方屏蔽
+            self.set_lidar_mask('rear')
+            # 使用预规划的路径（如果有的话）
+            if self.preplanned_green_path:
+                self.nav_path_points = self.preplanned_green_path
+                self.nav_path_idx = 0
+                self.preplanned_green_path = []  # 用完就清空
+                self.get_logger().info(f'RECOVER complete -> NAVIGATING_TO_GREEN (using preplanned path: {len(self.nav_path_points)} points)')
+            else:
+                self.get_logger().info('RECOVER complete -> NAVIGATING_TO_GREEN (no preplanned path)')
             self.green_nav_counter = 0
             self.state = State.NAVIGATING_TO_GREEN
 
@@ -1968,9 +2041,12 @@ class CleanerBot(Node):
                 return
 
             # 没有路径时：持续请求Nav2规划 + 用直接驾驶先走着
+            # 每2秒清除costmap（防止拖桶产生的幽灵障碍累积）
+            if self.green_nav_counter % 20 == 1:
+                self.clear_costmaps(reset_obstacle_layer=True)
+
             # 每5秒重新请求一次Nav2规划
             if self.green_nav_counter % 50 == 1:
-                self.clear_costmaps(reset_obstacle_layer=True)
                 self.get_logger().info(f'Requesting path to GREEN zone... counter={self.green_nav_counter}')
                 self.send_nav_goal(self.green_zone_approx[0], self.green_zone_approx[1])
 
