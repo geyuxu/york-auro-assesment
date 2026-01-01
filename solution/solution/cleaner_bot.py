@@ -24,6 +24,7 @@ from rclpy.node import Node
 
 # LLM interface for decision making
 from . import llm_interface as llm
+from .llm_interface import LLMInterface, get_llm_interface
 from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, QoSPresetProfiles
@@ -331,6 +332,17 @@ class CleanerBot(Node):
         self.control_timer = self.create_timer(
             0.1, self.control_loop, callback_group=self.callback_group)
 
+        # LLM interface initialization
+        self.llm = get_llm_interface(self.get_logger())
+        self.llm_enabled = self.llm.is_available()
+        self.llm_decision_interval = 50  # Check LLM every 50 ticks (5 seconds)
+        self.llm_decision_counter = 0
+        self.last_llm_action = None
+        if self.llm_enabled:
+            self.get_logger().info('LLM integration enabled')
+        else:
+            self.get_logger().info('LLM integration disabled (no API key or openai library)')
+
         # Startup delay
         self.startup_complete = False
         self.startup_timer = self.create_timer(
@@ -471,6 +483,206 @@ class CleanerBot(Node):
         # Rear: 150 to 210 degrees (behind robot, for ramming backup)
         rear_ranges = list(msg.ranges[150:210])
         self.rear_min_dist = get_min_range(rear_ranges)
+
+    # ==================== ATOMIC ACTIONS FOR LLM ====================
+
+    def get_robot_status(self) -> dict:
+        """Get current robot status for LLM context.
+
+        Returns a dictionary with all relevant robot state information
+        that can be used by the LLM to make decisions.
+        """
+        # Convert visible barrels to dict format for LLM
+        barrels_data = []
+        for b in self.visible_barrels:
+            color = "red" if b.colour == Barrel.RED else "blue"
+            barrels_data.append({
+                'color': color,
+                'size': b.size,
+                'x': b.x,
+                'y': b.y
+            })
+
+        # Convert visible zones to dict format
+        zones_data = []
+        for z in self.visible_zones:
+            if z.zone == Zone.ZONE_GREEN:
+                color = "green"
+            elif z.zone == Zone.ZONE_CYAN:
+                color = "cyan"
+            else:
+                color = "unknown"
+            zones_data.append({
+                'color': color,
+                'size': z.size,
+                'x': z.x,
+                'y': z.y
+            })
+
+        return {
+            'state': self.state.name,
+            'position': (self.map_x, self.map_y),
+            'yaw': self.map_yaw,
+            'has_barrel': self.has_barrel,
+            'collected_count': self.collected_count,
+            'official_total': self.official_total_count,
+            'radiation_level': self.current_radiation,
+            'visible_barrels': barrels_data,
+            'visible_zones': zones_data,
+            'sensor_data': {
+                'front': self.front_min_dist,
+                'left': self.left_side_min_dist,
+                'right': self.right_side_min_dist,
+                'rear': self.rear_min_dist,
+                'front_left': self.front_left_min_dist,
+                'front_right': self.front_right_min_dist
+            },
+            'nav_active': self.nav_active,
+            'waypoint_idx': self.current_waypoint_idx
+        }
+
+    def action_search(self):
+        """Atomic action: Start searching for barrels."""
+        self.cancel_navigation()
+        self.nav_path_points = []
+        self.state = State.SEARCHING
+        self.llm.log_event("action_search", {"from_state": self.state.name})
+        self.get_logger().info('[LLM ACTION] -> SEARCHING')
+
+    def action_approach_barrel(self, barrel_idx: int = 0):
+        """Atomic action: Approach a specific barrel.
+
+        Args:
+            barrel_idx: Index of the barrel in visible_barrels list
+        """
+        barrels = self.get_target_barrels()
+        if not barrels or barrel_idx >= len(barrels):
+            self.get_logger().warn(f'[LLM ACTION] Cannot approach barrel {barrel_idx}: not visible')
+            return False
+
+        barrel = barrels[barrel_idx]
+        barrel_pos = self.estimate_barrel_world_position(barrel)
+        if barrel_pos:
+            self.cancel_navigation()
+            self.nav_path_points = []
+            self.approach_counter = 0
+            self.lost_sight_counter = 0
+            self.approach_target = barrel_pos
+            self.state = State.APPROACHING
+            self.llm.log_event("action_approach", {
+                "barrel_idx": barrel_idx,
+                "barrel_size": barrel.size,
+                "target": barrel_pos
+            })
+            self.get_logger().info(f'[LLM ACTION] -> APPROACHING barrel {barrel_idx}')
+            return True
+        return False
+
+    def action_deliver(self):
+        """Atomic action: Navigate to green zone to deliver barrel."""
+        if not self.has_barrel:
+            self.get_logger().warn('[LLM ACTION] Cannot deliver: no barrel')
+            return False
+
+        self.cancel_navigation()
+        self.nav_path_points = []
+        self.green_nav_counter = 0
+        self.state = State.NAVIGATING_TO_GREEN
+        self.llm.log_event("action_deliver", {"has_barrel": self.has_barrel})
+        self.get_logger().info('[LLM ACTION] -> NAVIGATING_TO_GREEN')
+        return True
+
+    def action_decontaminate(self):
+        """Atomic action: Navigate to cyan zone to decontaminate."""
+        self.cancel_navigation()
+        self.nav_path_points = []
+        self.cyan_nav_counter = 0
+        self.state = State.NAVIGATING_TO_CYAN
+        self.llm.log_event("action_decontaminate", {"radiation": self.current_radiation})
+        self.get_logger().info('[LLM ACTION] -> NAVIGATING_TO_CYAN')
+        return True
+
+    def action_stop(self):
+        """Atomic action: Stop the robot."""
+        self.stop_robot()
+        self.cancel_navigation()
+        self.llm.log_event("action_stop", {})
+        self.get_logger().info('[LLM ACTION] -> STOP')
+
+    def _check_llm_decision(self) -> bool:
+        """Check if LLM wants to override current behavior.
+
+        Returns True if LLM took over control, False otherwise.
+        """
+        if not self.llm_enabled:
+            return False
+
+        self.llm_decision_counter += 1
+
+        # Only check every N ticks to avoid API spam
+        if self.llm_decision_counter < self.llm_decision_interval:
+            return False
+
+        self.llm_decision_counter = 0
+
+        # Get current status
+        status = self.get_robot_status()
+
+        # Query LLM for decision
+        action = self.llm.decide_next_action(
+            current_state=status['state'],
+            robot_position=status['position'],
+            robot_yaw=status['yaw'],
+            visible_barrels=status['visible_barrels'],
+            visible_zones=status['visible_zones'],
+            has_barrel=status['has_barrel'],
+            collected_count=status['collected_count'],
+            radiation_level=status['radiation_level']
+        )
+
+        if action is None or action == "CONTINUE":
+            # LLM says continue with default behavior
+            return False
+
+        # Execute LLM's decision
+        self.last_llm_action = action
+
+        if action == "SEARCH":
+            # Only switch if not already searching
+            if self.state not in [State.SEARCHING, State.SCANNING]:
+                self.action_search()
+                return True
+
+        elif action == "APPROACH":
+            # Only if we can see barrels and not already approaching
+            if self.state not in [State.APPROACHING, State.RAMMING]:
+                barrels = self.get_target_barrels()
+                if barrels:
+                    # Ask LLM which barrel to target
+                    idx = self.llm.select_target_barrel(
+                        status['visible_barrels'],
+                        status['position']
+                    )
+                    if idx is None:
+                        idx = 0  # Default to first/largest
+                    if self.action_approach_barrel(idx):
+                        return True
+
+        elif action == "DELIVER":
+            if self.has_barrel and self.state != State.NAVIGATING_TO_GREEN:
+                if self.action_deliver():
+                    return True
+
+        elif action == "DECONTAMINATE":
+            if self.state not in [State.NAVIGATING_TO_CYAN, State.DECONTAMINATING]:
+                if self.action_decontaminate():
+                    return True
+
+        elif action == "WAIT":
+            self.action_stop()
+            return True
+
+        return False
 
     # ==================== HELPERS ====================
 
@@ -866,6 +1078,13 @@ class CleanerBot(Node):
             self.get_logger().warn(f'High radiation! {self.current_radiation:.1f}')
             self.cancel_navigation()
             self.state = State.NAVIGATING_TO_CYAN
+
+        # LLM decision checkpoint (only during certain states that allow interruption)
+        # Don't interrupt time-critical states like RAMMING, RECOVER_LOCALIZATION, DELIVERING
+        if self.state in [State.SEARCHING, State.SCANNING, State.IDLE]:
+            if self._check_llm_decision():
+                # LLM took control, skip normal state machine this tick
+                return
 
         # Log state occasionally (every second)
         if hasattr(self, '_loop_count'):
@@ -1738,6 +1957,11 @@ class CleanerBot(Node):
                     self.clear_costmaps(reset_obstacle_layer=True)
                     # 记录当前巡视点，送完桶后返回
                     self.waypoint_before_pickup = self.current_waypoint_idx
+                    # Log event for LLM context
+                    self.llm.log_event("barrel_collected", {
+                        "count": self.collected_count,
+                        "position": (self.map_x, self.map_y)
+                    })
                     # Go to RECOVER first to fix AMCL localization after ramming
                     self.recover_counter = 0
                     self.recover_phase = 0
@@ -2166,6 +2390,12 @@ class CleanerBot(Node):
                     self.has_barrel = False
                     self.stop_robot()
                     self.set_lidar_mask('none')
+                    # Log event for LLM context
+                    self.llm.log_event("barrel_delivered", {
+                        "total": self.collected_count,
+                        "official_total": self.official_total_count,
+                        "position": (self.map_x, self.map_y)
+                    })
                     # 放完桶后，先检查周围是否有空间，如果太挤先移动一下
                     if self.front_min_dist < 0.5 or self.left_side_min_dist < 0.3 or self.right_side_min_dist < 0.3:
                         self.get_logger().info('Too close to obstacle after delivery, repositioning first')
