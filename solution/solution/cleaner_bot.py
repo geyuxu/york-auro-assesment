@@ -1248,11 +1248,10 @@ class CleanerBot(Node):
                 self.ram_phase = 2
                 self.turn_counter = 0
 
-        # Phase 2: 旋转180度 (基于累积角度检测)
+        # Phase 2: 旋转180度 (基于累积角度检测，带减速)
         elif self.ram_phase == 2:
             self.turn_counter += 1
             twist.linear.x = 0.0
-            twist.angular.z = 0.8  # 左转 (逆时针)
 
             # 记录起始角度和上一次角度（第一次进入时）
             if not hasattr(self, 'ram_start_yaw'):
@@ -1274,13 +1273,22 @@ class CleanerBot(Node):
             self.ram_last_yaw = self.map_yaw
 
             rotated_deg = abs(math.degrees(self.ram_total_rotated))
+            remaining_deg = 180.0 - rotated_deg
+
+            # 根据剩余角度调整旋转速度（快转+精确停止）
+            if remaining_deg > 40:
+                twist.angular.z = 1.2  # 快速旋转
+            elif remaining_deg > 15:
+                twist.angular.z = 0.5  # 中速
+            else:
+                twist.angular.z = 0.25  # 慢速精确对准
 
             # 每10个tick记录一次旋转进度
             if self.turn_counter % 10 == 0:
-                self.get_logger().info(f'RAMMING: Rotating... rotated={rotated_deg:.1f}° yaw={math.degrees(self.map_yaw):.1f}°')
+                self.get_logger().info(f'RAMMING: Rotating... rotated={rotated_deg:.1f}° remaining={remaining_deg:.1f}° yaw={math.degrees(self.map_yaw):.1f}°')
 
             # 检查是否旋转了约180度
-            if rotated_deg > 170:  # 接近180度
+            if rotated_deg >= 178:  # 更精确的停止点
                 self.get_logger().info(f'Finished turning 180°, rotated={rotated_deg:.1f}° final yaw={math.degrees(self.map_yaw):.1f}°')
                 # 转完180度后，桶在后方，切换mask从front到rear
                 self.set_lidar_mask('rear')
