@@ -53,6 +53,7 @@ class State(Enum):
     RECOVER_LOCALIZATION = auto()  # Spin to fix AMCL after ramming
     NAVIGATING_TO_GREEN = auto()
     DELIVERING = auto()
+    POST_DELIVER_REPOSITION = auto()  # 放下桶后向空地移动
     NAVIGATING_TO_CYAN = auto()
     DECONTAMINATING = auto()
 
@@ -819,6 +820,9 @@ class CleanerBot(Node):
         elif self.state == State.DELIVERING:
             self._handle_delivering()
 
+        elif self.state == State.POST_DELIVER_REPOSITION:
+            self._handle_post_deliver_reposition()
+
         elif self.state == State.NAVIGATING_TO_CYAN:
             self._handle_nav_to_cyan()
 
@@ -1541,10 +1545,16 @@ class CleanerBot(Node):
                     self.has_barrel = False
                     self.stop_robot()
                     self.set_lidar_mask('none')
-                    # 放完桶后去消毒
-                    self.cyan_nav_counter = 0
-                    self.get_logger().info('Barrel delivered -> NAVIGATING_TO_CYAN (decontaminate)')
-                    self.state = State.NAVIGATING_TO_CYAN
+                    # 放完桶后，先检查周围是否有空间，如果太挤先移动一下
+                    if self.front_min_dist < 0.5 or self.left_side_min_dist < 0.3 or self.right_side_min_dist < 0.3:
+                        self.get_logger().info('Too close to obstacle after delivery, repositioning first')
+                        self.post_deliver_reposition_counter = 0
+                        self.state = State.POST_DELIVER_REPOSITION
+                    else:
+                        # 空间足够，直接去消毒
+                        self.cyan_nav_counter = 0
+                        self.get_logger().info('Barrel delivered -> NAVIGATING_TO_CYAN (decontaminate)')
+                        self.state = State.NAVIGATING_TO_CYAN
                 self.service_pending = False
                 self.service_future = None
             return
@@ -1555,6 +1565,37 @@ class CleanerBot(Node):
         request.robot_id = self.robot_name
         self.service_future = self.offload_client.call_async(request)
         self.service_pending = True
+
+    def _handle_post_deliver_reposition(self):
+        """POST_DELIVER_REPOSITION: 放下桶后向空旷方向移动，避免卡住。"""
+        self.post_deliver_reposition_counter += 1
+
+        # 移动15个tick（1.5秒）
+        REPOSITION_TICKS = 15
+
+        if self.post_deliver_reposition_counter <= REPOSITION_TICKS:
+            twist = Twist()
+            # 向后退一点，同时根据左右距离调整方向
+            twist.linear.x = -0.2  # 后退
+
+            if self.left_side_min_dist > self.right_side_min_dist:
+                # 左边更空旷，稍微向左转
+                twist.angular.z = 0.2
+            else:
+                # 右边更空旷，稍微向右转
+                twist.angular.z = -0.2
+
+            self.cmd_vel_pub.publish(twist)
+
+            if self.post_deliver_reposition_counter % 10 == 0:
+                self.get_logger().info(f'POST_DELIVER_REPOSITION: backing up ({self.post_deliver_reposition_counter}/{REPOSITION_TICKS})')
+        else:
+            # 移动完成，去消毒
+            self.get_logger().info('POST_DELIVER_REPOSITION complete -> NAVIGATING_TO_CYAN')
+            self.stop_robot()
+            self.clear_costmaps()
+            self.cyan_nav_counter = 0
+            self.state = State.NAVIGATING_TO_CYAN
 
     def _handle_nav_to_cyan(self):
         """Navigate to cyan zone for decontamination."""
