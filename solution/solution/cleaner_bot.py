@@ -1053,6 +1053,17 @@ class CleanerBot(Node):
 
         red_barrels = self.get_red_barrels()
 
+        # 卡墙检测：front很近但桶不大，说明撞墙了
+        if self.front_min_dist < 0.2:
+            best_size = max([b.size for b in red_barrels], default=0) if red_barrels else 0
+            if best_size < 15000:  # 桶不够大，说明不是桶而是墙
+                self.get_logger().warn(f'Stuck at wall! front={self.front_min_dist:.2f}m barrel_size={best_size:.0f} -> back to SEARCHING')
+                self.cancel_navigation()
+                self.approach_target = None
+                self.set_lidar_mask('none')
+                self.state = State.SEARCHING
+                return
+
         # 检查是否可以进入RAMMING
         if red_barrels:
             self.lost_sight_counter = 0
