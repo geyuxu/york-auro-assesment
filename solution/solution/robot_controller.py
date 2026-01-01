@@ -202,7 +202,7 @@ class RobotController(Node):
                 self.current_radiation_level = radiation.level
                 break
 
-    def get_red_barrels(self):
+    def get_target_barrels(self):
         """Filter visible barrels to get only red ones"""
         return [b for b in self.visible_barrels if b.colour == Barrel.RED]
 
@@ -337,7 +337,7 @@ class RobotController(Node):
 
     def _handle_searching(self):
         """Search for red barrels"""
-        red_barrels = self.get_red_barrels()
+        red_barrels = self.get_target_barrels()
 
         if red_barrels and not self.has_barrel:
             # Found a barrel, switch to approaching
@@ -367,7 +367,7 @@ class RobotController(Node):
             self.state = State.COLLECTING_BARREL
 
         # Update target barrel from sensor (it might move in view)
-        red_barrels = self.get_red_barrels()
+        red_barrels = self.get_target_barrels()
         if red_barrels:
             self.target_barrel = red_barrels[0]
         else:
