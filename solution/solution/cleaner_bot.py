@@ -1385,7 +1385,9 @@ class CleanerBot(Node):
             twist.linear.x = 0.0
             twist.angular.z = 0.0
             if self.ram_counter >= 10:  # 刹停1秒确保完全停止
-                self.get_logger().info('Stopped, start turning 180°')
+                # 记录当前前方距离，用于旋转后验证桶是否在背后
+                self.expected_barrel_dist = self.front_min_dist
+                self.get_logger().info(f'Stopped, front_dist={self.front_min_dist:.2f}m, start turning 180°')
                 self.ram_phase = 2
                 self.turn_counter = 0
 
@@ -1431,15 +1433,35 @@ class CleanerBot(Node):
                 self.ram_phase = 3
                 self.ram_counter = 0  # 重置计数器用于刹停阶段
 
-        # Phase 3: 刹停 (确保角速度完全为0再倒车)
+        # Phase 3: 刹停 (确保角速度完全为0再倒车) + 验证桶在背后
         elif self.ram_phase == 3:
             twist.linear.x = 0.0
             twist.angular.z = 0.0
             if self.ram_counter >= 10:  # 刹停1秒确保完全停止
-                self.get_logger().info('Rotation stopped, now backing up to barrel')
-                self.ram_target_yaw = self.map_yaw  # 记录目标航向，用于保持直线倒车
-                self.ram_phase = 4
-                self.ram_counter = 0  # 重置计数器
+                # 验证桶是否在背后：比较rear距离和之前记录的front距离
+                expected = getattr(self, 'expected_barrel_dist', 0.5)
+                tolerance = 0.4  # 允许0.4m误差（旋转时可能有位移）
+
+                if self.rear_min_dist < expected + tolerance:
+                    # 后方有障碍物，距离与预期接近，应该是桶
+                    self.get_logger().info(
+                        f'Barrel confirmed behind! rear={self.rear_min_dist:.2f}m (expected ~{expected:.2f}m)'
+                    )
+                    self.ram_target_yaw = self.map_yaw  # 记录目标航向，用于保持直线倒车
+                    self.ram_phase = 4
+                    self.ram_counter = 0  # 重置计数器
+                else:
+                    # 后方太空旷，桶可能丢了或者旋转时推开了
+                    self.get_logger().warn(
+                        f'Barrel NOT detected behind! rear={self.rear_min_dist:.2f}m >> expected ~{expected:.2f}m, aborting'
+                    )
+                    self.stop_robot()
+                    self.set_lidar_mask('none')
+                    self.clear_costmaps()
+                    if hasattr(self, 'expected_barrel_dist'):
+                        del self.expected_barrel_dist
+                    self.state = State.SEARCHING
+                    return
 
         # Phase 4: 向后倒车 (已旋转180°，桶在背后) 并持续尝试pickup
         elif self.ram_phase == 4:
