@@ -1173,11 +1173,13 @@ class CleanerBot(Node):
         self.cmd_vel_pub.publish(twist)
 
     def _handle_approaching(self):
-        """APPROACHING: 使用Nav2导航到桶的位置，避免撞墙。
+        """APPROACHING: 纯视觉导航接近桶。
 
-        目标位置在进入APPROACHING时设置(approach_target)，不会更新。
-        Nav2会自动避障。当桶足够大且距离足够近时，切换到RAMMING。
-        如果Nav2认为到达但距离还远，使用视觉伺服直接前进。
+        策略：
+        1. 看到桶 → 视觉伺服，保持桶在画面中心，边转边走
+        2. 前方有障碍（墙）→ 绕行避障
+        3. 桶足够大且足够近 → 进入RAMMING
+        4. 丢失视野 → 原地转向寻找 / 超时返回SEARCHING
         """
         self.approach_counter += 1
 
@@ -1190,7 +1192,6 @@ class CleanerBot(Node):
                 best_check = max(red_barrels_check, key=lambda b: b.size)
                 if best_check.size > 2000:  # 还能看到较大的桶
                     self.get_logger().info(f'APPROACHING timeout but barrel visible (size={best_check.size:.0f}), repositioning and retry')
-                    self.cancel_navigation()
                     # 向空旷方向移动一点再继续
                     self.approach_counter = 200  # 重置但不完全清零，给10秒继续尝试
                     self.approach_reposition_counter = 0
@@ -1198,84 +1199,146 @@ class CleanerBot(Node):
                     return
             # 看不到桶或桶太小，放弃
             self.get_logger().warn(f'APPROACHING timeout ({self.approach_counter} ticks), giving up')
-            self.cancel_navigation()
             self.approach_target = None
-            self.set_lidar_mask('none')
             self.state = State.SEARCHING
             return
 
         red_barrels = self.get_red_barrels()
+        twist = Twist()
 
         # 检查是否可以进入RAMMING
         if red_barrels:
             self.lost_sight_counter = 0
             best = max(red_barrels, key=lambda b: b.size)
+            x_offset = best.x - self.IMAGE_CENTER_X
 
             # 检查是否足够近可以RAMMING
             # 必须: 桶可见且非常大(>25000) AND LiDAR距离足够近(<0.8m)
             if best.size > self.BARREL_SIZE_COMMIT and self.front_min_dist < 0.8:
                 self.get_logger().info(f'BARREL VERY CLOSE! size={best.size:.0f} front={self.front_min_dist:.2f}m -> RAMMING')
-                self.cancel_navigation()
-                self.approach_target = None  # 清除目标
-                # 保持前方mask，APPROACHING已经启用了，不要取消
+                self.stop_robot()
+                self.approach_target = None
+                self.set_lidar_mask('front')  # 屏蔽前方雷达
                 self.ram_counter = 0
                 self.ram_phase = 0
-                self.turn_counter = 0  # 重置旋转计数器
+                self.turn_counter = 0
                 self.lost_sight_counter = 0
                 self.state = State.RAMMING
                 return
 
-            # Nav2认为到达但距离还远 -> 使用视觉伺服直接前进
-            if not self.is_navigation_active() and self.front_min_dist > 0.4:
-                # 视觉伺服：边转边走，使用比例控制
-                x_offset = best.x - self.IMAGE_CENTER_X
-                twist = Twist()
+            # ========== 纯视觉导航 + 雷达避墙 ==========
+            # 检查各方向障碍物
+            front_blocked = self.front_min_dist < 0.5
+            front_left_blocked = self.front_left_min_dist < 0.4
+            front_right_blocked = self.front_right_min_dist < 0.4
+            left_close = self.left_side_min_dist < 0.4
+            right_close = self.right_side_min_dist < 0.4
 
-                # 角速度：比例控制
-                twist.angular.z = -0.004 * x_offset
-                # 限制角速度
-                twist.angular.z = max(-0.6, min(0.6, twist.angular.z))
-
-                # 线速度：始终保持较高速度，只有极端偏移时才减速
-                if abs(x_offset) > 250:
-                    # 极端偏移，中速前进+快速转向
-                    twist.linear.x = 0.18
+            # 首先处理紧急情况：前方太近，必须后退
+            if self.front_min_dist < 0.35:
+                twist.linear.x = -0.15
+                # 向空旷方向转
+                if self.left_side_min_dist > self.right_side_min_dist:
+                    twist.angular.z = 0.4
                 else:
-                    # 正常情况，全速前进
-                    twist.linear.x = 0.26
+                    twist.angular.z = -0.4
+                if self.approach_counter % 10 == 0:
+                    self.get_logger().info(f'APPROACHING: Emergency backup, front={self.front_min_dist:.2f}m')
 
-                self.cmd_vel_pub.publish(twist)
+            # 前方有障碍，需要绕行
+            elif front_blocked or front_left_blocked or front_right_blocked:
+                # 判断桶在左边还是右边，向桶的方向绕行
+                # 但如果那边也有墙，就向另一边绕
+                if x_offset < 0:
+                    # 桶在左边，尝试向左绕行
+                    if not left_close and not front_left_blocked:
+                        twist.linear.x = 0.1
+                        twist.angular.z = 0.5
+                    else:
+                        # 左边也堵了，只能向右绕
+                        twist.linear.x = 0.1
+                        twist.angular.z = -0.4
+                else:
+                    # 桶在右边，尝试向右绕行
+                    if not right_close and not front_right_blocked:
+                        twist.linear.x = 0.1
+                        twist.angular.z = -0.5
+                    else:
+                        # 右边也堵了，只能向左绕
+                        twist.linear.x = 0.1
+                        twist.angular.z = 0.4
 
                 if self.approach_counter % 10 == 0:
-                    self.get_logger().info(f'APPROACHING: Visual servo, barrel_size={best.size:.0f} x_offset={x_offset:.0f} front={self.front_min_dist:.2f}m')
-                return
+                    self.get_logger().info(f'APPROACHING: Obstacle avoidance, front={self.front_min_dist:.2f}m L={self.left_side_min_dist:.2f}m R={self.right_side_min_dist:.2f}m')
+
+            # 侧面靠近墙壁，需要修正方向
+            elif left_close or right_close:
+                # 基础视觉伺服
+                twist.angular.z = -0.005 * x_offset
+                twist.linear.x = 0.2
+
+                # 叠加避墙修正
+                if left_close and not right_close:
+                    # 左边有墙，向右偏
+                    twist.angular.z -= 0.3
+                elif right_close and not left_close:
+                    # 右边有墙，向左偏
+                    twist.angular.z += 0.3
+
+                twist.angular.z = max(-0.8, min(0.8, twist.angular.z))
+
+                if self.approach_counter % 10 == 0:
+                    self.get_logger().info(f'APPROACHING: Wall correction, L={self.left_side_min_dist:.2f}m R={self.right_side_min_dist:.2f}m')
+
+            else:
+                # 前方和侧面都空旷，纯视觉伺服前进
+                # 角速度：比例控制，保持桶在画面中心
+                twist.angular.z = -0.005 * x_offset
+                twist.angular.z = max(-0.8, min(0.8, twist.angular.z))
+
+                # 线速度：根据桶的大小和偏移调整
+                if abs(x_offset) > 200:
+                    # 偏移较大，减速+快速转向
+                    twist.linear.x = 0.15
+                elif best.size > 15000:
+                    # 桶很大（很近），慢速接近
+                    twist.linear.x = 0.18
+                else:
+                    # 正常情况，较快前进
+                    twist.linear.x = 0.25
+
+                if self.approach_counter % 10 == 0:
+                    self.get_logger().info(f'APPROACHING: Visual servo, size={best.size:.0f} x={x_offset:.0f} front={self.front_min_dist:.2f}m')
+
+            self.cmd_vel_pub.publish(twist)
 
         else:
+            # 丢失桶的视野
             self.lost_sight_counter += 1
-            # 丢失视野太久，可能桶被推开或者根本不是桶
-            # 不要轻易进入RAMMING，返回SEARCHING重新寻找
-            if self.lost_sight_counter > 60:  # 6秒看不到桶
+
+            if self.lost_sight_counter <= 30:
+                # 短暂丢失（3秒内），原地转向寻找
+                # 向最后看到桶的方向转
+                if hasattr(self, '_last_barrel_direction'):
+                    twist.angular.z = 0.4 if self._last_barrel_direction < 0 else -0.4
+                else:
+                    twist.angular.z = 0.4  # 默认左转
+                self.cmd_vel_pub.publish(twist)
+
+                if self.lost_sight_counter % 10 == 0:
+                    self.get_logger().info(f'APPROACHING: Lost sight, searching... ({self.lost_sight_counter} ticks)')
+            else:
+                # 丢失视野太久，返回SEARCHING
                 self.get_logger().warn(f'Lost sight for too long ({self.lost_sight_counter} ticks) -> back to SEARCHING')
-                self.cancel_navigation()
+                self.stop_robot()
                 self.approach_target = None
-                self.set_lidar_mask('none')
                 self.state = State.SEARCHING
                 return
 
-        # 使用Nav2导航到目标位置（只发送一次）
-        if self.approach_target and not self.is_navigation_active():
-            self.get_logger().info(f'APPROACHING: Nav2 to target ({self.approach_target[0]:.1f}, {self.approach_target[1]:.1f})')
-            self.send_nav_goal(self.approach_target[0], self.approach_target[1])
-
-        # Log occasionally
-        if self.approach_counter % 10 == 0:
-            barrel_info = ""
-            if red_barrels:
-                best = max(red_barrels, key=lambda b: b.size)
-                barrel_info = f" barrel_size={best.size:.0f}"
-            self.get_logger().info(
-                f'APPROACHING: count={self.approach_counter} front={self.front_min_dist:.2f}m nav_active={self.nav_active}{barrel_info}'
-            )
+        # 记录桶的方向，用于丢失时转向
+        if red_barrels:
+            best = max(red_barrels, key=lambda b: b.size)
+            self._last_barrel_direction = best.x - self.IMAGE_CENTER_X
 
     def _handle_approach_reposition(self):
         """APPROACH_REPOSITION: 向空旷方向移动一点后重试APPROACHING。
