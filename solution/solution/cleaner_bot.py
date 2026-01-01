@@ -1053,17 +1053,6 @@ class CleanerBot(Node):
 
         red_barrels = self.get_red_barrels()
 
-        # 卡墙检测：front很近但桶不大，说明撞墙了
-        if self.front_min_dist < 0.2:
-            best_size = max([b.size for b in red_barrels], default=0) if red_barrels else 0
-            if best_size < 15000:  # 桶不够大，说明不是桶而是墙
-                self.get_logger().warn(f'Stuck at wall! front={self.front_min_dist:.2f}m barrel_size={best_size:.0f} -> back to SEARCHING')
-                self.cancel_navigation()
-                self.approach_target = None
-                self.set_lidar_mask('none')
-                self.state = State.SEARCHING
-                return
-
         # 检查是否可以进入RAMMING
         if red_barrels:
             self.lost_sight_counter = 0
@@ -1259,10 +1248,11 @@ class CleanerBot(Node):
                 self.ram_phase = 2
                 self.turn_counter = 0
 
-        # Phase 2: 旋转180度 (基于累积角度检测，带减速)
+        # Phase 2: 旋转180度 (基于累积角度检测)
         elif self.ram_phase == 2:
             self.turn_counter += 1
             twist.linear.x = 0.0
+            twist.angular.z = 0.8  # 左转 (逆时针)
 
             # 记录起始角度和上一次角度（第一次进入时）
             if not hasattr(self, 'ram_start_yaw'):
@@ -1284,22 +1274,13 @@ class CleanerBot(Node):
             self.ram_last_yaw = self.map_yaw
 
             rotated_deg = abs(math.degrees(self.ram_total_rotated))
-            remaining_deg = 180.0 - rotated_deg
-
-            # 根据剩余角度调整旋转速度（快转+精确停止）
-            if remaining_deg > 40:
-                twist.angular.z = 1.2  # 快速旋转
-            elif remaining_deg > 15:
-                twist.angular.z = 0.5  # 中速
-            else:
-                twist.angular.z = 0.25  # 慢速精确对准
 
             # 每10个tick记录一次旋转进度
             if self.turn_counter % 10 == 0:
-                self.get_logger().info(f'RAMMING: Rotating... rotated={rotated_deg:.1f}° remaining={remaining_deg:.1f}° yaw={math.degrees(self.map_yaw):.1f}°')
+                self.get_logger().info(f'RAMMING: Rotating... rotated={rotated_deg:.1f}° yaw={math.degrees(self.map_yaw):.1f}°')
 
             # 检查是否旋转了约180度
-            if rotated_deg >= 178:  # 更精确的停止点
+            if rotated_deg > 170:  # 接近180度
                 self.get_logger().info(f'Finished turning 180°, rotated={rotated_deg:.1f}° final yaw={math.degrees(self.map_yaw):.1f}°')
                 # 转完180度后，桶在后方，切换mask从front到rear
                 self.set_lidar_mask('rear')
