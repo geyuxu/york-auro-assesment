@@ -3,11 +3,17 @@ LLM Interface for Cleaner Bot
 
 This module provides an interface for LLM-based decision making.
 Uses OpenAI API (or compatible API) for intelligent decision support.
+
+架构设计：
+1. LLM 控制上层策略决策（找桶/送桶/洗消）
+2. Vision API 控制底层驾驶（卡住时用图像分析）
+3. 规则层做实时控制（简单情况）
 """
 
 import os
 import json
 import time
+import base64
 from typing import Optional, List, Tuple, Dict, Any
 
 # Optional: OpenAI library
@@ -36,11 +42,15 @@ class LLMInterface:
         # Configuration from environment variables
         self.api_key = os.getenv('OPENAI_API_KEY', '')
         self.api_base = os.getenv('OPENAI_API_BASE', 'https://api.openai.com/v1')
-        self.model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
+        self.model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')  # 最轻量的模型
 
-        # Rate limiting
+        # Rate limiting - 控制API调用频率
         self.last_call_time = 0
-        self.min_call_interval = 2.0  # Minimum 2 seconds between calls
+        self.min_call_interval = 3.0  # 3秒最小间隔，节省API调用
+
+        # Vision API 独立的 rate limit
+        self.last_vision_call_time = 0
+        self.min_vision_call_interval = 4.0  # Vision API 4秒间隔
 
         # Failure tracking
         self.failure_count = 0
@@ -50,13 +60,13 @@ class LLMInterface:
         self.event_history: List[Dict[str, Any]] = []
         self.max_history = 20
 
-        # Initialize client
+        # Initialize OpenAI client
         if self.enabled and self.api_key:
             try:
                 self.client = OpenAI(api_key=self.api_key, base_url=self.api_base)
                 self._log_info(f"LLM interface initialized (model: {self.model})")
             except Exception as e:
-                self._log_warn(f"Failed to initialize OpenAI client: {e}")
+                self._log_warn(f"Failed to initialize OpenAI: {e}")
                 self.enabled = False
         else:
             if self.enabled:
@@ -223,60 +233,60 @@ STATE MACHINE STATES:
 
 YOU ARE IN DIRECT CONTROL MODE - You control the robot's movement directly!
 
-MOTION COMMANDS (these move the robot):
-- FORWARD: Move forward (0.2 m/s)
+CRITICAL: NEVER use STOP! The robot must ALWAYS be moving or turning to explore!
+
+MOTION COMMANDS:
+- FORWARD: Move forward (0.2 m/s) - DEFAULT when path is clear
 - FORWARD_SLOW: Move forward slowly (0.1 m/s) - use when close to barrel
-- FORWARD_FAST: Move forward faster (0.3 m/s)
-- BACKWARD: Move backward (-0.15 m/s)
-- TURN_LEFT: Rotate left (0.5 rad/s)
-- TURN_RIGHT: Rotate right (-0.5 rad/s)
-- TURN_LEFT_SLOW: Rotate left slowly (0.3 rad/s)
-- TURN_RIGHT_SLOW: Rotate right slowly (-0.3 rad/s)
-- TURN_LEFT_FAST: Rotate left fast (0.8 rad/s)
-- TURN_RIGHT_FAST: Rotate right fast (-0.8 rad/s)
-- FORWARD_LEFT: Move forward while turning left
-- FORWARD_RIGHT: Move forward while turning right
-- BACKWARD_LEFT: Move backward while turning left
-- BACKWARD_RIGHT: Move backward while turning right
-- STOP: Stop all motion
+- FORWARD_FAST: Move forward faster (0.3 m/s) - use when path is very open
+- BACKWARD: Move backward (-0.15 m/s) - only when front blocked
+- TURN_LEFT: Rotate left (0.5 rad/s) - avoid right obstacles or scan
+- TURN_RIGHT: Rotate right (-0.5 rad/s) - avoid left obstacles or scan
+- FORWARD_LEFT: Move forward while turning left - approach barrel on left
+- FORWARD_RIGHT: Move forward while turning right - approach barrel on right
+- BACKWARD_LEFT: Backup while turning left
+- BACKWARD_RIGHT: Backup while turning right
 
-SERVICE COMMANDS (these call ROS services):
-- PICKUP: Pick up barrel (only when very close to barrel, front < 0.5m)
-- OFFLOAD: Drop barrel (only when in green zone, has barrel)
-- DECONTAMINATE_SERVICE: Decontaminate (only when in cyan zone)
+SERVICE COMMANDS:
+- PICKUP: Pick up barrel (only when barrel size > 15000 AND front < 0.5m)
+- OFFLOAD: Drop barrel (only when green zone visible AND has barrel)
 
-DECISION LOGIC:
+OBSTACLE AVOIDANCE RULES (PRIORITY - check these first!):
+1. front < 0.3m → BACKWARD (emergency!)
+2. front < 0.5m AND front_left < 0.4m → BACKWARD_RIGHT
+3. front < 0.5m AND front_right < 0.4m → BACKWARD_LEFT
+4. front_left < 0.35m → TURN_RIGHT or FORWARD_RIGHT
+5. front_right < 0.35m → TURN_LEFT or FORWARD_LEFT
+6. left < 0.3m → FORWARD_RIGHT (drift away from wall)
+7. right < 0.3m → FORWARD_LEFT (drift away from wall)
 
-1. If NOT carrying barrel and see barrel:
-   - Barrel on LEFT (x < 270) -> TURN_LEFT or FORWARD_LEFT
-   - Barrel on RIGHT (x > 370) -> TURN_RIGHT or FORWARD_RIGHT
-   - Barrel CENTERED (270 < x < 370):
-     - If far (size < 5000) -> FORWARD
-     - If medium (5000 < size < 15000) -> FORWARD_SLOW
-     - If very close (size > 15000, front < 0.5m) -> PICKUP
+BARREL COLLECTION LOGIC:
+1. If see barrel AND NOT carrying one:
+   - x < 250 (far left) → TURN_LEFT
+   - x < 320 (left) → FORWARD_LEFT
+   - x > 390 (far right) → TURN_RIGHT
+   - x > 320 (right) → FORWARD_RIGHT
+   - 270 < x < 370 (centered):
+     * size < 5000 → FORWARD
+     * size 5000-15000 → FORWARD_SLOW
+     * size > 15000 AND front < 0.5m → PICKUP
 
 2. If carrying barrel:
-   - Need to find green zone and go there
-   - If see green zone: move toward it
-   - If in green zone (size > 5000) -> OFFLOAD
+   - If see green zone: move toward it (same logic as barrel)
+   - If green zone size > 5000 → OFFLOAD
+   - If no zone visible → TURN_LEFT to search
 
-3. If front blocked (front < 0.3m):
-   - BACKWARD first, then turn toward open space
+3. If no barrel visible AND not carrying:
+   - FORWARD if path clear (front > 1.0m)
+   - Otherwise TURN_LEFT to scan for barrels
 
-4. If nothing visible:
-   - TURN_LEFT to scan for barrels
+EXPLORATION: When nothing interesting visible, keep moving!
+- front > 1.5m → FORWARD_FAST
+- front > 0.8m → FORWARD
+- front > 0.5m → FORWARD_SLOW
+- front < 0.5m → Turn toward more open side (check left vs right distance)
 
-5. If radiation > 50 and not carrying barrel:
-   - Find cyan zone and use DECONTAMINATE_SERVICE
-
-REMEMBER:
-- x < 320 = LEFT side of camera
-- x > 320 = RIGHT side of camera
-- Larger size = closer object
-- You must use PICKUP to collect barrel, just being close is not enough!
-- You must use OFFLOAD in green zone to deliver barrel!
-
-Respond with ONLY ONE command name."""
+Respond with ONLY ONE command name. NEVER respond with STOP!"""
 
         # Format barrel info with full details
         barrels_str = "None visible"
@@ -576,6 +586,311 @@ Should the robot go decontaminate now?"""
             elif "NO" in response:
                 self._log_info("LLM: Decontaminate NO")
                 return False
+
+        return None
+
+    # ==================== Vision API 驾驶 ====================
+
+    def vision_drive(
+        self,
+        image_data: bytes,
+        goal: str,
+        sensor_data: Dict[str, float],
+    ) -> Optional[str]:
+        """使用 Vision API 分析图像并决定驾驶动作。
+
+        用于卡住时的智能脱困 - 分析摄像头图像，找到通往目标的路径。
+
+        Args:
+            image_data: JPEG 图像数据（bytes）
+            goal: 当前目标描述，如 "find red barrel", "reach green zone", "escape to open space"
+            sensor_data: LiDAR 距离数据
+
+        Returns:
+            驾驶动作: FORWARD, BACKWARD, TURN_LEFT, TURN_RIGHT, FORWARD_LEFT, FORWARD_RIGHT, 等
+        """
+        if not self.is_available():
+            return None
+
+        # Vision API 使用独立的 rate limit
+        now = time.time()
+        if now - self.last_vision_call_time < self.min_vision_call_interval:
+            return None
+        self.last_vision_call_time = now
+
+        try:
+            # 将图像编码为 base64
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+            # 构建 Vision API 请求
+            vision_system_prompt = """You are a robot vision driver. Analyze the camera image and decide the movement command.
+
+GOAL: {goal}
+
+AVAILABLE COMMANDS:
+- FORWARD: Move straight ahead (path is clear)
+- FORWARD_FAST: Move faster (wide open space ahead)
+- FORWARD_LEFT: Move forward while turning left
+- FORWARD_RIGHT: Move forward while turning right
+- TURN_LEFT: Rotate left in place (to face a better direction)
+- TURN_RIGHT: Rotate right in place
+- BACKWARD: Reverse (when front is blocked)
+- BACKWARD_LEFT: Reverse while turning left
+- BACKWARD_RIGHT: Reverse while turning right
+
+DECISION RULES:
+1. If you see the target (barrel/zone), move toward it
+2. If path is blocked, turn toward open space
+3. Prefer moving forward over turning in place
+4. Consider the LiDAR data for obstacle distances
+
+OUTPUT: Respond with ONLY ONE command name, nothing else.""".format(goal=goal)
+
+            sensor_str = f"""LiDAR distances:
+- Front: {sensor_data.get('front', 10):.2f}m
+- Front-left: {sensor_data.get('front_left', 10):.2f}m
+- Front-right: {sensor_data.get('front_right', 10):.2f}m
+- Left: {sensor_data.get('left', 10):.2f}m
+- Right: {sensor_data.get('right', 10):.2f}m
+- Rear: {sensor_data.get('rear', 10):.2f}m"""
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",  # Vision 功能需要 4o 系列
+                messages=[
+                    {"role": "system", "content": vision_system_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Goal: {goal}\n\n{sensor_str}\n\nAnalyze this camera image and decide the movement:"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_base64}",
+                                    "detail": "low"  # 使用低分辨率减少 token
+                                }
+                            }
+                        ]
+                    }
+                ],
+                temperature=0.2,
+                max_tokens=20,
+                timeout=8.0  # Vision 需要更长时间
+            )
+
+            if response.choices and len(response.choices) > 0:
+                self.failure_count = 0
+                action = response.choices[0].message.content.strip().upper()
+                # 提取第一个词
+                action = action.split()[0] if action.split() else action
+
+                valid_actions = [
+                    "FORWARD", "FORWARD_FAST", "FORWARD_LEFT", "FORWARD_RIGHT",
+                    "TURN_LEFT", "TURN_RIGHT",
+                    "BACKWARD", "BACKWARD_LEFT", "BACKWARD_RIGHT"
+                ]
+
+                if action in valid_actions:
+                    self._log_info(f"[VISION] {goal} -> {action}")
+                    return action
+                else:
+                    self._log_warn(f"[VISION] Invalid action: {action}")
+                    return None
+
+        except Exception as e:
+            self._log_warn(f"[VISION] Error: {e}")
+            self.failure_count += 1
+            return None
+
+        return None
+
+    def vision_approach_barrel(
+        self,
+        image_data: bytes,
+        front_dist: float,
+        target_color: str = "red",
+    ) -> Tuple[Optional[str], bool]:
+        """Vision 引导接近桶 - 更激进的 APPROACHING。
+
+        使用 Vision API 分析图像，直接导航到桶旁边。
+        当 LiDAR 确认前方有障碍物且足够近时，返回 READY_TO_PICKUP。
+
+        Args:
+            image_data: JPEG 图像数据
+            front_dist: 前方 LiDAR 距离
+            target_color: 目标桶颜色 ("red" 或 "blue")
+
+        Returns:
+            Tuple of (action, ready_to_pickup):
+            - action: 运动指令 (FORWARD, TURN_LEFT, etc.)
+            - ready_to_pickup: 是否可以直接 pickup (前方足够近)
+        """
+        # 如果前方足够近，可以直接 pickup
+        if front_dist < 0.45:
+            return ("STOP", True)  # ready to pickup!
+
+        if not self.is_available():
+            return (None, False)
+
+        # Vision API 使用独立的 rate limit
+        now = time.time()
+        if now - self.last_vision_call_time < self.min_vision_call_interval:
+            return (None, False)
+        self.last_vision_call_time = now
+
+        try:
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+            vision_prompt = f"""You are guiding a robot to approach a {target_color} barrel.
+
+TASK: Navigate toward the {target_color} barrel in the image. The barrel is a cylinder.
+
+DISTANCE: Front LiDAR reads {front_dist:.2f}m
+
+COMMANDS:
+- FORWARD_FAST: Barrel is centered and far (>1m), move quickly
+- FORWARD: Barrel is centered, move toward it
+- FORWARD_LEFT: Barrel is on the left, move forward while turning left
+- FORWARD_RIGHT: Barrel is on the right, move forward while turning right
+- TURN_LEFT: Barrel is far left, need to turn more
+- TURN_RIGHT: Barrel is far right, need to turn more
+- SEARCH: Cannot see {target_color} barrel, need to search
+
+RULES:
+1. If {target_color} barrel is visible and centered -> FORWARD or FORWARD_FAST
+2. If {target_color} barrel is on left side -> FORWARD_LEFT or TURN_LEFT
+3. If {target_color} barrel is on right side -> FORWARD_RIGHT or TURN_RIGHT
+4. If no {target_color} barrel visible -> SEARCH
+5. Avoid blue barrels if looking for red!
+
+OUTPUT: Only the command name."""
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": vision_prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_base64}",
+                                    "detail": "low"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                temperature=0.1,
+                max_tokens=20,
+                timeout=8.0
+            )
+
+            if response.choices and len(response.choices) > 0:
+                self.failure_count = 0
+                action = response.choices[0].message.content.strip().upper()
+                action = action.split()[0] if action.split() else action
+
+                valid_actions = [
+                    "FORWARD", "FORWARD_FAST", "FORWARD_LEFT", "FORWARD_RIGHT",
+                    "TURN_LEFT", "TURN_RIGHT", "SEARCH"
+                ]
+
+                if action in valid_actions:
+                    self._log_info(f"[VISION-APPROACH] {target_color} barrel -> {action}")
+                    return (action, False)
+                else:
+                    self._log_warn(f"[VISION-APPROACH] Invalid: {action}")
+                    return (None, False)
+
+        except Exception as e:
+            self._log_warn(f"[VISION-APPROACH] Error: {e}")
+            self.failure_count += 1
+            return (None, False)
+
+        return (None, False)
+
+    # ==================== LLM 策略决策 ====================
+
+    def get_strategy_decision(
+        self,
+        has_barrel: bool,
+        collected_count: int,
+        radiation_level: float,
+        visible_barrels: int,
+        visible_green_zone: bool,
+        visible_cyan_zone: bool,
+        time_elapsed: float,
+        is_stuck: bool,
+    ) -> Optional[str]:
+        """LLM 上层策略决策 - 决定机器人当前应该做什么。
+
+        这是高层决策，不是底层运动控制。
+
+        Args:
+            has_barrel: 是否正在携带桶
+            collected_count: 已收集的桶数量
+            radiation_level: 当前辐射等级
+            visible_barrels: 可见桶的数量
+            visible_green_zone: 是否看到绿色区域
+            visible_cyan_zone: 是否看到蓝色洗消区
+            time_elapsed: 已过去的时间（秒）
+            is_stuck: 是否处于卡住状态
+
+        Returns:
+            策略决策: SEARCH_BARREL, COLLECT_BARREL, DELIVER_BARREL, DECONTAMINATE, EXPLORE, ESCAPE
+        """
+        if not self.is_available():
+            return None
+
+        if not self._rate_limit_check():
+            return None
+
+        strategy_system_prompt = """You are a high-level strategy planner for a barrel collection robot.
+
+TASK: Collect red barrels and deliver them to green zones. Manage radiation by visiting cyan zones.
+
+AVAILABLE STRATEGIES:
+- SEARCH_BARREL: Patrol waypoints to find barrels (when no barrel visible, not carrying)
+- COLLECT_BARREL: Go collect a visible barrel (when barrel visible, not carrying)
+- DELIVER_BARREL: Deliver carried barrel to green zone (when carrying barrel)
+- DECONTAMINATE: Go to cyan zone to reduce radiation (radiation > 60)
+- EXPLORE: Random exploration to find new areas
+- ESCAPE: Emergency escape from stuck position
+
+DECISION PRIORITY:
+1. If stuck -> ESCAPE
+2. If radiation > 70 -> DECONTAMINATE (urgent!)
+3. If carrying barrel -> DELIVER_BARREL
+4. If see barrel and not carrying -> COLLECT_BARREL
+5. If radiation > 50 and see cyan -> DECONTAMINATE
+6. Otherwise -> SEARCH_BARREL
+
+OUTPUT: Respond with ONLY ONE strategy name."""
+
+        user_prompt = f"""Current situation:
+- Carrying barrel: {has_barrel}
+- Barrels collected: {collected_count}
+- Radiation level: {radiation_level:.0f}/100
+- Visible barrels: {visible_barrels}
+- See green zone: {visible_green_zone}
+- See cyan zone: {visible_cyan_zone}
+- Time elapsed: {time_elapsed:.0f}s
+- Is stuck: {is_stuck}
+
+What strategy should the robot use?"""
+
+        response = self._query_llm(strategy_system_prompt, user_prompt, max_tokens=20)
+
+        if response:
+            strategy = response.upper().strip().split()[0]
+            valid_strategies = [
+                "SEARCH_BARREL", "COLLECT_BARREL", "DELIVER_BARREL",
+                "DECONTAMINATE", "EXPLORE", "ESCAPE"
+            ]
+            if strategy in valid_strategies:
+                self._log_info(f"[STRATEGY] Decision: {strategy}")
+                return strategy
 
         return None
 

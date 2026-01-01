@@ -34,8 +34,10 @@ from std_srvs.srv import Empty
 
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, Image
 from assessment_interfaces.msg import BarrelList, ZoneList, Barrel, Zone, RadiationList, BarrelLog
+from cv_bridge import CvBridge
+import cv2
 from auro_interfaces.srv import ItemRequest
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Path
@@ -171,6 +173,8 @@ class CleanerBot(Node):
         self.MAX_APPROACH_ATTEMPTS = 100  # 10 seconds at 10Hz
         self.lost_sight_counter = 0
         self.approach_target = None  # (x, y) 目标位置，进入APPROACHING时设置，不再更新
+        self._direct_pickup_pending = False  # Direct pickup 异步等待
+        self._direct_pickup_start = 0
 
         # Ramming state
         self.ram_counter = 0
@@ -332,15 +336,33 @@ class CleanerBot(Node):
         self.control_timer = self.create_timer(
             0.1, self.control_loop, callback_group=self.callback_group)
 
-        # LLM interface initialization
+        # LLM interface initialization - LLM做策略决策，Vision API做卡住时驾驶
         self.llm = get_llm_interface(self.get_logger())
         self.llm_enabled = self.llm.is_available()
-        self.llm_direct_control = True    # True = LLM直接控制模式（绕过状态机）
-        self.llm_control_interval = 5     # LLM控制模式下每5个tick(0.5秒)查询一次
-        self.llm_counter = 0
-        self.last_llm_action = None
+        self.llm_direct_control = False   # False = 状态机主导，LLM只在卡住时接管
+        self.llm_escape_mode = False      # LLM脱困模式
+        self.llm_escape_steps = 0
+        self.escape_sequence = []
+        self.stuck_counter = 0
+        self.last_stuck_check_pos = (0.0, 0.0)
+
+        # Vision API 驾驶相关
+        self.cv_bridge = CvBridge()
+        self.latest_image = None  # 最新的摄像头图像 (JPEG bytes)
+        self.vision_escape_mode = False  # Vision API 脱困模式
+        self.vision_escape_counter = 0   # Vision 脱困计数器
+        self.vision_last_action = None   # Vision 上一个动作
+        self.vision_action_counter = 0   # 执行同一个动作的计数
+
+        # 订阅摄像头图像
+        image_topic = f'{self.robot_namespace}/camera/image_raw'
+        self.image_sub = self.create_subscription(
+            Image, image_topic, self.image_callback,
+            QoSPresetProfiles.SENSOR_DATA.value,
+            callback_group=self.callback_group)
+
         if self.llm_enabled:
-            self.get_logger().info('LLM DIRECT CONTROL MODE enabled - LLM controls robot directly')
+            self.get_logger().info('STATE MACHINE + LLM策略 + Vision驾驶 (卡住时激活)')
         else:
             self.get_logger().info('LLM integration disabled (no API key or openai library)')
 
@@ -372,6 +394,19 @@ class CleanerBot(Node):
         cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
         self.map_yaw = math.atan2(siny_cosp, cosy_cosp)
         self.position_valid = True
+
+    def image_callback(self, msg):
+        """Handle camera image for Vision API driving."""
+        try:
+            # 将 ROS Image 转换为 OpenCV 格式，然后编码为 JPEG
+            cv_image = self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            # 缩小图像以减少 token 消耗（Vision API 会自动调整，但预处理更快）
+            small_image = cv2.resize(cv_image, (320, 240))
+            # 编码为 JPEG
+            _, jpeg_data = cv2.imencode('.jpg', small_image, [cv2.IMWRITE_JPEG_QUALITY, 60])
+            self.latest_image = jpeg_data.tobytes()
+        except Exception as e:
+            pass  # 静默忽略图像处理错误
 
     def odom_callback(self, msg):
         # 现在使用AMCL pose获取map坐标，odom回调只用于调试
@@ -484,6 +519,33 @@ class CleanerBot(Node):
         # Rear: 150 to 210 degrees (behind robot, for ramming backup)
         rear_ranges = list(msg.ranges[150:210])
         self.rear_min_dist = get_min_range(rear_ranges)
+
+    def _get_lidar_range_at_angle(self, angle_deg: int, window: int = 10) -> float:
+        """获取指定角度方向的 LiDAR 距离。
+
+        Args:
+            angle_deg: 角度（0=正前方，90=左侧，180=正后方，270=右侧）
+            window: 取周围多少度的最小值（默认前后各5度）
+
+        Returns:
+            该方向的最小距离（米），如果无效返回10.0
+        """
+        if not self.lidar_ranges or len(self.lidar_ranges) < 360:
+            return 10.0
+
+        # 确保角度在 0-359 范围内
+        angle_deg = angle_deg % 360
+
+        # 取窗口内的最小有效值
+        half_window = window // 2
+        valid_ranges = []
+        for i in range(-half_window, half_window + 1):
+            idx = (angle_deg + i) % 360
+            r = self.lidar_ranges[idx]
+            if 0.01 < r < 10.0:
+                valid_ranges.append(r)
+
+        return min(valid_ranges) if valid_ranges else 10.0
 
     # ==================== ATOMIC ACTIONS FOR LLM ====================
 
@@ -634,12 +696,20 @@ class CleanerBot(Node):
     # ==================== LLM DIRECT CONTROL ====================
 
     def _llm_direct_control_loop(self):
-        """LLM直接控制循环 - 完全绕过状态机。
+        """混合控制循环 - 规则控制 + LLM卡住脱困。
 
-        每隔llm_control_interval个tick查询一次LLM，
-        LLM根据传感器数据直接发送运动指令。
+        规则负责：避障、追踪桶、基本移动（每个tick）
+        LLM负责：检测到卡住时随机游走脱困
         """
         self.llm_counter += 1
+
+        # 初始化卡住检测变量（必须在任何使用之前）
+        if not hasattr(self, 'llm_escape_mode'):
+            self.stuck_counter = 0
+            self.last_position = (self.map_x, self.map_y)
+            self.llm_escape_mode = False
+            self.llm_escape_steps = 0
+            self.escape_sequence = []
 
         # 日志（每秒一次）
         if self.llm_counter % 10 == 0:
@@ -648,47 +718,484 @@ class CleanerBot(Node):
             if barrels:
                 b = barrels[0]
                 barrel_info = f"size={b.size:.0f} x={b.x:.0f}"
+            mode = "ESCAPE" if self.llm_escape_mode else "NORMAL"
             self.get_logger().info(
-                f'[LLM CTRL] pos=({self.map_x:.1f},{self.map_y:.1f}) '
+                f'[{mode}] pos=({self.map_x:.1f},{self.map_y:.1f}) '
                 f'front={self.front_min_dist:.2f}m barrel={barrel_info} '
                 f'has_barrel={self.has_barrel} collected={self.collected_count}'
             )
 
-        # 每隔llm_control_interval个tick查询LLM
-        if self.llm_counter % self.llm_control_interval != 0:
+        # ========== 卡住检测（每秒检测一次） ==========
+        if self.llm_counter % 10 == 0:
+            dx = abs(self.map_x - self.last_position[0])
+            dy = abs(self.map_y - self.last_position[1])
+            moved = (dx + dy) > 0.05  # 移动超过5cm算没卡住
+
+            if not moved and not self.llm_escape_mode:
+                self.stuck_counter += 1
+                if self.stuck_counter >= 5:  # 连续5秒没移动 = 卡住
+                    self.get_logger().warn(f'[STUCK] Robot stuck for {self.stuck_counter}s, activating LLM escape!')
+                    self.llm_escape_mode = True
+                    self.llm_escape_steps = 0
+                    self._request_llm_escape()
+            else:
+                self.stuck_counter = 0
+
+            self.last_position = (self.map_x, self.map_y)
+
+        # ========== 执行控制 ==========
+        if self.llm_escape_mode:
+            # LLM脱困模式：执行LLM给的随机游走指令
+            action = self._execute_llm_escape()
+        else:
+            # 正常模式：规则控制
+            action = self._rule_based_control()
+
+        self._execute_llm_action(action)
+
+    # ==================== Vision API 脱困 ====================
+
+    def _activate_vision_escape(self):
+        """激活 Vision API 脱困模式。
+
+        使用 Vision API 分析摄像头图像，决定往哪个方向走。
+        """
+        self.cancel_navigation()
+        self.nav_path_points = []
+        self.last_nav_goal_time = None
+
+        self.vision_escape_mode = True
+        self.vision_escape_counter = 0
+        self.vision_last_action = None
+        self.vision_action_counter = 0
+        self.stuck_counter = 0
+
+        self.get_logger().info('[VISION] Escape mode activated!')
+
+    def _execute_vision_escape_tick(self):
+        """执行一个 tick 的 Vision API 脱困。
+
+        策略：
+        1. 第一次调用 Vision API 获取初始方向
+        2. 如果 API 失败，用 LiDAR 选择最开阔方向
+        3. 持续执行动作，每3秒尝试获取新动作
+        4. 紧急避障优先
+        """
+        self.vision_escape_counter += 1
+
+        # 限制脱困时间（最多20秒）
+        if self.vision_escape_counter > 200:
+            self.get_logger().info('[VISION] Escape timeout, switching to rule-based escape')
+            self.vision_escape_mode = False
+            self._activate_llm_escape()
             return
 
-        # 获取当前状态
-        status = self.get_robot_status()
+        # 检查是否已经移动了足够距离
+        if self.vision_escape_counter > 30:  # 至少3秒后才检查
+            dx = abs(self.map_x - self.last_stuck_check_pos[0])
+            dy = abs(self.map_y - self.last_stuck_check_pos[1])
+            if (dx + dy) > 0.4:  # 移动超过0.4m，脱困成功
+                self._complete_vision_escape()
+                return
 
-        # 查询LLM
-        action = self.llm.decide_next_action(
-            current_state="LLM_DIRECT_CONTROL",
-            robot_position=status['position'],
-            robot_yaw=status['yaw'],
-            visible_barrels=status['visible_barrels'],
-            visible_zones=status['visible_zones'],
-            has_barrel=status['has_barrel'],
-            collected_count=status['collected_count'],
-            radiation_level=status['radiation_level'],
-            sensor_data=status['sensor_data'],
-            nav_active=False,
-            waypoint_idx=0
+        # 首次或每40个tick（4秒）尝试调用一次 Vision API
+        if self.vision_escape_counter == 1 or self.vision_escape_counter % 40 == 0:
+            action = self._get_vision_action()
+            if action:
+                self.vision_last_action = action
+                self.vision_action_counter = 0
+                self.get_logger().info(f'[VISION] API action: {action}')
+
+        # 如果没有动作，用 LiDAR 选择方向
+        if self.vision_last_action is None:
+            self.vision_last_action = self._get_lidar_escape_action()
+            self.get_logger().info(f'[VISION] LiDAR fallback: {self.vision_last_action}')
+
+        # 执行当前动作
+        self._execute_vision_action(self.vision_last_action)
+        self.vision_action_counter += 1
+
+        # 每秒日志
+        if self.vision_escape_counter % 10 == 0:
+            self.get_logger().info(
+                f'[VISION] tick {self.vision_escape_counter}, '
+                f'action={self.vision_last_action}, pos=({self.map_x:.1f},{self.map_y:.1f})'
+            )
+
+    def _get_lidar_escape_action(self) -> str:
+        """根据 LiDAR 选择脱困方向（Vision API 失败时的备用）。"""
+        front = self.front_min_dist
+        left = self.left_side_min_dist
+        right = self.right_side_min_dist
+        rear = self.rear_min_dist
+
+        # 找最开阔方向
+        directions = {'front': front, 'left': left, 'right': right, 'rear': rear}
+        most_open = max(directions, key=directions.get)
+
+        if most_open == 'rear':
+            return "BACKWARD" if rear > 0.5 else "TURN_LEFT"
+        elif most_open == 'left':
+            return "FORWARD_LEFT" if front > 0.4 else "TURN_LEFT"
+        elif most_open == 'right':
+            return "FORWARD_RIGHT" if front > 0.4 else "TURN_RIGHT"
+        else:  # front
+            return "FORWARD" if front > 0.4 else ("TURN_LEFT" if left > right else "TURN_RIGHT")
+
+    def _get_vision_action(self) -> str:
+        """调用 Vision API 获取驾驶动作。"""
+        if not self.latest_image:
+            return None
+
+        # 确定当前目标
+        if self.has_barrel:
+            goal = "escape to open space then find green zone"
+        else:
+            goal = "escape to open space then find red barrel"
+
+        # 准备传感器数据
+        sensor_data = {
+            'front': self.front_min_dist,
+            'front_left': self.front_left_min_dist,
+            'front_right': self.front_right_min_dist,
+            'left': self.left_side_min_dist,
+            'right': self.right_side_min_dist,
+            'rear': self.rear_min_dist,
+        }
+
+        # 调用 Vision API
+        action = self.llm.vision_drive(self.latest_image, goal, sensor_data)
+        return action
+
+    def _execute_vision_action(self, action: str):
+        """执行 Vision API 返回的动作，带紧急避障。"""
+        # 速度配置 - 足够快但安全
+        action_speeds = {
+            "FORWARD": (0.40, 0.0),
+            "FORWARD_FAST": (0.50, 0.0),
+            "FORWARD_LEFT": (0.35, 0.5),
+            "FORWARD_RIGHT": (0.35, -0.5),
+            "TURN_LEFT": (0.0, 1.0),
+            "TURN_RIGHT": (0.0, -1.0),
+            "BACKWARD": (-0.30, 0.0),
+            "BACKWARD_LEFT": (-0.25, 0.5),
+            "BACKWARD_RIGHT": (-0.25, -0.5),
+        }
+
+        linear, angular = action_speeds.get(action, (0.30, 0.0))
+
+        # 紧急避障覆盖 - 优先级最高
+        front = self.front_min_dist
+        left = self.left_side_min_dist
+        right = self.right_side_min_dist
+        front_left = self.front_left_min_dist
+        front_right = self.front_right_min_dist
+
+        # 紧急后退
+        if front < 0.25:
+            linear = -0.30
+            angular = 0.8 if left > right else -0.8
+            # 更新动作以便下次不重复
+            self.vision_last_action = "BACKWARD"
+        # 角落保护
+        elif front < 0.40 and front_left < 0.35:
+            linear = -0.20
+            angular = -0.6
+            self.vision_last_action = "BACKWARD_RIGHT"
+        elif front < 0.40 and front_right < 0.35:
+            linear = -0.20
+            angular = 0.6
+            self.vision_last_action = "BACKWARD_LEFT"
+        # 侧面太近，偏转
+        elif left < 0.30:
+            angular = min(angular - 0.3, -0.3)  # 向右偏
+        elif right < 0.30:
+            angular = max(angular + 0.3, 0.3)   # 向左偏
+
+        twist = Twist()
+        twist.linear.x = linear
+        twist.angular.z = angular
+        self.cmd_vel_pub.publish(twist)
+
+    def _complete_vision_escape(self):
+        """Vision 脱困完成。"""
+        self.vision_escape_mode = False
+        self.vision_escape_counter = 0
+        self.stuck_counter = 0
+        self.last_stuck_check_pos = (self.map_x, self.map_y)
+
+        # 重置导航状态
+        self.nav_path_points = []
+        self.last_nav_goal_time = None
+        self.clear_costmaps(reset_obstacle_layer=True)
+
+        self.get_logger().info(
+            f'[VISION] Escape complete! pos=({self.map_x:.1f},{self.map_y:.1f}), resuming state machine.'
         )
 
-        if action is None:
-            # API调用失败或限流，保持上一个动作或停止
+    # ==================== LLM 规则脱困（备用） ====================
+
+    def _activate_llm_escape(self):
+        """激活LLM脱困模式 - 往空地走，更激进更长距离。
+
+        关键改进：
+        1. 转向角度减少（只转90度），前进距离增加
+        2. 前进时间更长，确保真正移动到新位置
+        3. 最后停下来让状态机重新评估
+        """
+        self.cancel_navigation()  # 取消当前导航
+        self.nav_path_points = []  # 清空路径
+        self.last_nav_goal_time = None  # 重置Nav2目标时间，让状态机立即发送新目标
+
+        front = getattr(self, 'front_min_dist', 10.0)
+        left = getattr(self, 'left_side_min_dist', 10.0)
+        right = getattr(self, 'right_side_min_dist', 10.0)
+        rear = getattr(self, 'rear_min_dist', 10.0)
+
+        # 找到最开阔的方向
+        directions = {'front': front, 'left': left, 'right': right, 'rear': rear}
+        most_open = max(directions, key=directions.get)
+        open_distance = directions[most_open]
+
+        self.get_logger().info(f'[ESCAPE] Most open: {most_open} ({open_distance:.2f}m), F={front:.1f} L={left:.1f} R={right:.1f} B={rear:.1f}')
+
+        # 根据最开阔方向生成脱困序列
+        # 速度: FORWARD_FAST=0.45m/s, BACKWARD_FAST=0.30m/s, TURN_FAST=1.0rad/s
+        # 1.0 rad/s * 1.5秒 = 1.5 rad ≈ 86度
+        # 0.45 m/s * 4秒 = 1.8m 前进距离
+        if most_open == 'rear':
+            # 后方开阔：后退 + 转向 + 前进
+            turn = "TURN_LEFT_FAST" if left > right else "TURN_RIGHT_FAST"
+            self.escape_sequence = (
+                ["BACKWARD_FAST"] * 20 +  # 2秒后退 = 0.6m
+                [turn] * 16 +              # 1.6秒转向 ≈ 92度
+                ["FORWARD_FAST"] * 35      # 3.5秒前进 = 1.6m
+            )
+        elif most_open == 'left':
+            # 左侧开阔：后退 + 左转90度 + 前进
+            self.escape_sequence = (
+                ["BACKWARD_FAST"] * 12 +   # 1.2秒后退 = 0.36m
+                ["TURN_LEFT_FAST"] * 16 +  # 1.6秒左转 ≈ 92度
+                ["FORWARD_FAST"] * 40      # 4秒前进 = 1.8m
+            )
+        elif most_open == 'right':
+            # 右侧开阔：后退 + 右转90度 + 前进
+            self.escape_sequence = (
+                ["BACKWARD_FAST"] * 12 +   # 1.2秒后退 = 0.36m
+                ["TURN_RIGHT_FAST"] * 16 + # 1.6秒右转 ≈ 92度
+                ["FORWARD_FAST"] * 40      # 4秒前进 = 1.8m
+            )
+        else:
+            # 前方开阔但卡住 - 可能是角落卡住，转向后前进
+            turn = "TURN_LEFT_FAST" if left > right else "TURN_RIGHT_FAST"
+            self.escape_sequence = (
+                ["BACKWARD_FAST"] * 15 +   # 1.5秒后退 = 0.45m
+                [turn] * 8 +               # 0.8秒转向 ≈ 46度
+                ["FORWARD_FAST"] * 45      # 4.5秒前进 = 2m
+            )
+
+        # 如果有LLM，让LLM优化序列
+        if self.llm_enabled:
+            prompt = f"""Robot STUCK! Escape to OPEN SPACE.
+Sensors: front={front:.1f}m left={left:.1f}m right={right:.1f}m rear={rear:.1f}m
+Most open: {most_open} ({open_distance:.1f}m)
+Commands: BACKWARD, TURN_LEFT, TURN_RIGHT, FORWARD
+Output: cmd1,cmd2,... (5-10 commands toward open space)"""
+
+            response = self.llm._query_llm(
+                "Robot escape. Output ONLY comma-separated commands.",
+                prompt,
+                max_tokens=60
+            )
+
+            if response:
+                commands = [cmd.strip().upper() for cmd in response.split(',')]
+                valid = ["BACKWARD", "TURN_LEFT", "TURN_RIGHT", "FORWARD"]
+                llm_seq = [c for c in commands if c in valid]
+                if llm_seq:
+                    # 用更快的版本替换
+                    fast_map = {
+                        "BACKWARD": "BACKWARD_FAST",
+                        "TURN_LEFT": "TURN_LEFT_FAST",
+                        "TURN_RIGHT": "TURN_RIGHT_FAST",
+                        "FORWARD": "FORWARD_FAST"
+                    }
+                    expanded = []
+                    for cmd in llm_seq:
+                        fast_cmd = fast_map.get(cmd, cmd)
+                        expanded.extend([fast_cmd] * 10)  # 每个命令1秒
+                    self.escape_sequence = expanded
+                    self.get_logger().info(f'[LLM] Escape: {llm_seq}')
+
+        self.llm_escape_mode = True
+        self.llm_escape_steps = 0
+
+    def _execute_llm_escape_tick(self):
+        """执行一个tick的LLM脱困动作。"""
+        if not self.escape_sequence:
+            self.llm_escape_mode = False
+            self.stuck_counter = 0
             return
 
-        self.last_llm_action = action
-        self.get_logger().info(f'[LLM CTRL] Action: {action}')
+        self.llm_escape_steps += 1
 
-        # 执行LLM的指令
-        self._execute_llm_action(action)
+        if self.llm_escape_steps <= len(self.escape_sequence):
+            action = self.escape_sequence[self.llm_escape_steps - 1]
+
+            # 更激进的速度配置 - 速度加大确保真正移动
+            escape_speeds = {
+                "FORWARD_FAST": (0.45, 0.0),   # 增加到0.45 m/s
+                "BACKWARD_FAST": (-0.30, 0.0), # 增加到0.30 m/s
+                "TURN_LEFT_FAST": (0.0, 1.0),  # 增加到1.0 rad/s
+                "TURN_RIGHT_FAST": (0.0, -1.0),
+                "FORWARD": (0.30, 0.0),
+                "BACKWARD": (-0.25, 0.0),
+                "TURN_LEFT": (0.0, 0.7),
+                "TURN_RIGHT": (0.0, -0.7),
+            }
+
+            linear, angular = escape_speeds.get(action, (0.2, 0.0))
+            twist = Twist()
+            twist.linear.x = linear
+            twist.angular.z = angular
+            self.cmd_vel_pub.publish(twist)
+
+            # 每秒日志
+            if self.llm_escape_steps % 10 == 0:
+                self.get_logger().info(f'[ESCAPE] Step {self.llm_escape_steps}/{len(self.escape_sequence)}: {action} pos=({self.map_x:.1f},{self.map_y:.1f})')
+        else:
+            # 脱困序列执行完毕
+            self.llm_escape_mode = False
+            self.stuck_counter = 0
+            self.last_stuck_check_pos = (self.map_x, self.map_y)
+
+            # 重置Nav2状态，让状态机立即开始新的导航
+            self.nav_path_points = []
+            self.last_nav_goal_time = None
+            self.clear_costmaps(reset_obstacle_layer=True)
+
+            self.get_logger().info(f'[ESCAPE] Complete! pos=({self.map_x:.1f},{self.map_y:.1f}), resuming state machine.')
+
+    def _rule_based_control(self) -> str:
+        """规则层：实时控制逻辑。
+
+        优先级：
+        1. 紧急避障
+        2. 追踪目标（桶或zone）
+        3. 探索移动
+        """
+        front = getattr(self, 'front_min_dist', 10.0)
+        front_left = getattr(self, 'front_left_min_dist', 10.0)
+        front_right = getattr(self, 'front_right_min_dist', 10.0)
+        left = getattr(self, 'left_side_min_dist', 10.0)
+        right = getattr(self, 'right_side_min_dist', 10.0)
+
+        # ===== 1. 紧急避障 =====
+        if front < 0.3:
+            return "BACKWARD"
+        if front < 0.5 and front_left < 0.4:
+            return "BACKWARD_RIGHT"
+        if front < 0.5 and front_right < 0.4:
+            return "BACKWARD_LEFT"
+
+        # ===== 2. 追踪目标 =====
+        if self.has_barrel:
+            # 有桶 -> 找绿色zone
+            zones = [z for z in self.visible_zones if z.zone == Zone.ZONE_GREEN]
+            if zones:
+                z = zones[0]
+                # 检查是否可以offload
+                if z.size > 5000 and front < 0.8:
+                    return "OFFLOAD"
+                # 追踪zone
+                return self._track_target(z.x, z.size)
+            else:
+                # 没看到zone，转圈找
+                return "TURN_LEFT"
+        else:
+            # 没桶 -> 找桶
+            barrels = self.get_target_barrels()
+            if barrels:
+                b = barrels[0]
+                # 检查是否可以pickup
+                if b.size > 15000 and front < 0.5:
+                    return "PICKUP"
+                # 追踪桶
+                return self._track_target(b.x, b.size)
+
+        # ===== 3. 探索移动 =====
+        # 侧边避障
+        if front_left < 0.35:
+            return "FORWARD_RIGHT"
+        if front_right < 0.35:
+            return "FORWARD_LEFT"
+        if left < 0.4:
+            return "FORWARD_RIGHT"
+        if right < 0.4:
+            return "FORWARD_LEFT"
+
+        # 根据前方距离选择速度
+        if front > 1.5:
+            return "FORWARD_FAST"
+        elif front > 0.8:
+            return "FORWARD"
+        elif front > 0.5:
+            return "FORWARD_SLOW"
+        else:
+            # 前方有障碍，转向更开阔的一侧
+            if left > right:
+                return "TURN_LEFT"
+            else:
+                return "TURN_RIGHT"
+
+    def _track_target(self, x: float, size: float) -> str:
+        """追踪目标（桶或zone）的运动控制。
+
+        Args:
+            x: 目标在图像中的x坐标（中心=320）
+            size: 目标的像素大小（越大越近）
+        """
+        # 目标在左边
+        if x < 250:
+            return "TURN_LEFT"
+        elif x < 300:
+            return "FORWARD_LEFT"
+        # 目标在右边
+        elif x > 390:
+            return "TURN_RIGHT"
+        elif x > 340:
+            return "FORWARD_RIGHT"
+        # 目标在中间 - 根据距离调整速度
+        else:
+            if size < 3000:
+                return "FORWARD_FAST"
+            elif size < 8000:
+                return "FORWARD"
+            else:
+                return "FORWARD_SLOW"
+
+    def _get_llm_strategy(self) -> str:
+        """LLM层：策略决策。
+
+        只在特殊情况下调用LLM做决策：
+        - 多个桶可选时选择哪个
+        - 是否需要去decontaminate
+        - 卡住时的恢复策略
+        """
+        # 检查是否需要decontaminate
+        if self.current_radiation > 50 and not self.has_barrel:
+            # 辐射高，考虑去decontaminate
+            cyan_zones = [z for z in self.visible_zones if z.zone == Zone.ZONE_CYAN]
+            if cyan_zones and cyan_zones[0].size > 3000:
+                return "DECONTAMINATE_SERVICE"
+
+        # 暂时不调用LLM API，只用规则
+        # 未来可以在这里添加LLM调用来做更复杂的决策
+        return None
 
     def _execute_llm_action(self, action: str):
         """执行LLM的动作指令。"""
-        # 直接运动控制
+        # 直接运动控制 - 机器人必须持续移动探索
         motion_commands = {
             "FORWARD": (0.2, 0.0),
             "FORWARD_SLOW": (0.1, 0.0),
@@ -701,13 +1208,24 @@ class CleanerBot(Node):
             "TURN_RIGHT_SLOW": (0.0, -0.3),
             "TURN_LEFT_FAST": (0.0, 0.8),
             "TURN_RIGHT_FAST": (0.0, -0.8),
-            "FORWARD_LEFT": (0.15, 0.3),
-            "FORWARD_RIGHT": (0.15, -0.3),
-            "BACKWARD_LEFT": (-0.1, 0.3),
-            "BACKWARD_RIGHT": (-0.1, -0.3),
-            "STOP": (0.0, 0.0),
+            "FORWARD_LEFT": (0.15, 0.4),
+            "FORWARD_RIGHT": (0.15, -0.4),
+            "BACKWARD_LEFT": (-0.12, 0.4),
+            "BACKWARD_RIGHT": (-0.12, -0.4),
         }
 
+        # 服务调用优先检查
+        if action == "PICKUP":
+            self._do_pickup()
+            return
+        elif action == "OFFLOAD":
+            self._do_offload()
+            return
+        elif action == "DECONTAMINATE_SERVICE":
+            self._do_decontaminate()
+            return
+
+        # 运动命令
         if action in motion_commands:
             linear, angular = motion_commands[action]
             twist = Twist()
@@ -716,13 +1234,9 @@ class CleanerBot(Node):
             self.cmd_vel_pub.publish(twist)
             return
 
-        # 服务调用
-        if action == "PICKUP":
-            self._do_pickup()
-        elif action == "OFFLOAD":
-            self._do_offload()
-        elif action == "DECONTAMINATE_SERVICE":
-            self._do_decontaminate()
+        # 如果LLM返回STOP或未知命令，使用规则避障继续移动
+        self.get_logger().warn(f'[LLM] Unknown/STOP command "{action}" - using rule-based fallback')
+        self._rule_based_fallback()
 
     def _do_pickup(self):
         """执行pickup服务调用。"""
@@ -802,6 +1316,83 @@ class CleanerBot(Node):
                 self.get_logger().info('[LLM] Decontaminate failed - not in cyan zone?')
         except Exception as e:
             self.get_logger().error(f'[LLM] Decontaminate error: {e}')
+
+    def _rule_based_fallback(self):
+        """基于规则的避障回退 - 当LLM返回无效命令时保持机器人移动。
+
+        参考 llm_mapper.py 的碰撞风险评估逻辑。
+        机器人必须持续移动探索，绝不停止！
+        """
+        # 获取当前传感器距离
+        front = getattr(self, 'front_min_dist', 10.0)
+        front_left = getattr(self, 'front_left_min_dist', 10.0)
+        front_right = getattr(self, 'front_right_min_dist', 10.0)
+        left = getattr(self, 'left_side_min_dist', 10.0)
+        right = getattr(self, 'right_side_min_dist', 10.0)
+        rear = getattr(self, 'rear_min_dist', 10.0)
+
+        twist = Twist()
+
+        # 规则1: 前方非常近 - 紧急后退
+        if front < 0.3:
+            twist.linear.x = -0.15
+            twist.angular.z = 0.0
+            self.get_logger().debug('[Fallback] Emergency BACKWARD - front too close')
+
+        # 规则2: 前方近且前左近 - 后退右转
+        elif front < 0.5 and front_left < 0.4:
+            twist.linear.x = -0.12
+            twist.angular.z = -0.4
+            self.get_logger().debug('[Fallback] BACKWARD_RIGHT - front+left blocked')
+
+        # 规则3: 前方近且前右近 - 后退左转
+        elif front < 0.5 and front_right < 0.4:
+            twist.linear.x = -0.12
+            twist.angular.z = 0.4
+            self.get_logger().debug('[Fallback] BACKWARD_LEFT - front+right blocked')
+
+        # 规则4: 前左近 - 右转或前进右转
+        elif front_left < 0.35:
+            twist.linear.x = 0.1
+            twist.angular.z = -0.4
+            self.get_logger().debug('[Fallback] FORWARD_RIGHT - left corner')
+
+        # 规则5: 前右近 - 左转或前进左转
+        elif front_right < 0.35:
+            twist.linear.x = 0.1
+            twist.angular.z = 0.4
+            self.get_logger().debug('[Fallback] FORWARD_LEFT - right corner')
+
+        # 规则6: 左侧近 - 轻微右转前进
+        elif left < 0.4:
+            twist.linear.x = 0.15
+            twist.angular.z = -0.3
+            self.get_logger().debug('[Fallback] Drift right - left side close')
+
+        # 规则7: 右侧近 - 轻微左转前进
+        elif right < 0.4:
+            twist.linear.x = 0.15
+            twist.angular.z = 0.3
+            self.get_logger().debug('[Fallback] Drift left - right side close')
+
+        # 规则8: 前方有障碍但不紧急 - 选择更开阔的方向转
+        elif front < 0.6:
+            if left > right:
+                twist.linear.x = 0.0
+                twist.angular.z = 0.5
+                self.get_logger().debug('[Fallback] TURN_LEFT - front blocked, left more open')
+            else:
+                twist.linear.x = 0.0
+                twist.angular.z = -0.5
+                self.get_logger().debug('[Fallback] TURN_RIGHT - front blocked, right more open')
+
+        # 规则9: 前方开阔 - 前进探索
+        else:
+            twist.linear.x = 0.2
+            twist.angular.z = 0.0
+            self.get_logger().debug('[Fallback] FORWARD - path clear')
+
+        self.cmd_vel_pub.publish(twist)
 
     def _check_llm_decision(self) -> bool:
         """Check if LLM wants to override current behavior.
@@ -1335,11 +1926,52 @@ class CleanerBot(Node):
         if not self.startup_complete:
             return
 
-        # ========== LLM DIRECT CONTROL MODE ==========
-        # 当启用LLM直接控制时，完全绕过状态机，由LLM根据传感器数据直接控制
-        if self.llm_enabled and self.llm_direct_control:
-            self._llm_direct_control_loop()
+        # ========== Vision API 脱困模式 ==========
+        if self.vision_escape_mode:
+            self._execute_vision_escape_tick()
             return
+
+        # ========== LLM 规则脱困模式（备用） ==========
+        if self.llm_escape_mode:
+            self._execute_llm_escape_tick()
+            return
+
+        # ========== 卡住检测（每秒检测一次，只在导航状态检测） ==========
+        if not hasattr(self, '_loop_count'):
+            self._loop_count = 0
+        self._loop_count += 1
+
+        # 只在这些状态检测卡住，不打断收桶/送桶关键流程
+        stuck_detection_states = [
+            State.SEARCHING, State.SCANNING,
+            State.NAVIGATING_TO_GREEN, State.NAVIGATING_TO_CYAN
+        ]
+
+        if self._loop_count % 10 == 0:
+            if self.state in stuck_detection_states:
+                dx = abs(self.map_x - self.last_stuck_check_pos[0])
+                dy = abs(self.map_y - self.last_stuck_check_pos[1])
+                moved = (dx + dy) > 0.08  # 移动超过8cm算没卡住（放宽阈值）
+
+                if not moved:
+                    self.stuck_counter += 1
+                    if self.stuck_counter >= 8:  # 连续8秒没移动 = 卡住（增加到8秒）
+                        self.get_logger().warn(f'[STUCK] Robot stuck for {self.stuck_counter}s in {self.state.name}!')
+                        # 优先使用 Vision API 脱困（如果有图像且LLM可用）
+                        if self.llm_enabled and self.latest_image is not None:
+                            self.get_logger().info('[STUCK] Activating Vision API escape!')
+                            self._activate_vision_escape()
+                        else:
+                            # 备用：使用规则脱困
+                            self.get_logger().info('[STUCK] Activating rule-based escape!')
+                            self._activate_llm_escape()
+                else:
+                    self.stuck_counter = 0
+            else:
+                # 非检测状态，重置卡住计数器
+                self.stuck_counter = 0
+
+            self.last_stuck_check_pos = (self.map_x, self.map_y)
 
         # ========== 以下是传统状态机模式 ==========
         # Priority: Radiation check (skip if already going to/at cyan, or going to green after decontam)
@@ -1350,15 +1982,11 @@ class CleanerBot(Node):
             self.state = State.NAVIGATING_TO_CYAN
 
         # Log state occasionally (every second)
-        if hasattr(self, '_loop_count'):
-            self._loop_count += 1
-        else:
-            self._loop_count = 0
-
         if self._loop_count % 10 == 0:
             pos_status = "valid" if self.position_valid else "INVALID"
+            mode = "ESCAPE" if self.llm_escape_mode else self.state.name
             self.get_logger().info(
-                f'STATE: {self.state.name} pos=({self.map_x:.1f},{self.map_y:.1f}) [{pos_status}]'
+                f'STATE: {mode} pos=({self.map_x:.1f},{self.map_y:.1f}) [{pos_status}]'
             )
 
         # # Stuck detection and recovery (DISABLED - was causing issues)
@@ -1939,169 +2567,196 @@ class CleanerBot(Node):
         self.cmd_vel_pub.publish(twist)
 
     def _handle_approaching(self):
-        """APPROACHING: 纯视觉导航接近桶。
+        """APPROACHING: Vision API 引导接近桶 + 规则 fallback。
 
-        策略：
-        1. 看到桶 → 视觉伺服，保持桶在画面中心，边转边走
-        2. 前方有障碍（墙）→ 绕行避障
-        3. 桶足够大且足够近 → 进入RAMMING
-        4. 丢失视野 → 原地转向寻找 / 超时返回SEARCHING
+        新策略（更激进）：
+        1. 尝试用 Vision API 分析图像，直接导航到桶
+        2. Vision API 返回 ready_to_pickup 时，直接尝试 pickup（跳过 RAMMING 的旋转）
+        3. 如果 Vision API 不可用，fallback 到规则视觉伺服
+        4. LiDAR 确认前方有障碍物且足够近时，直接 pickup
         """
+        # ========== 检查待处理的直接 pickup 结果 ==========
+        if self._check_direct_pickup_result():
+            return  # 还在等待结果或已成功处理
+
         self.approach_counter += 1
 
-        # APPROACHING超时：如果300 ticks (30秒) 还没进入RAMMING
-        MAX_APPROACH_TICKS = 300
+        # APPROACHING超时：如果400 ticks (40秒) 还没成功
+        MAX_APPROACH_TICKS = 400
         if self.approach_counter > MAX_APPROACH_TICKS:
-            # 超时前检查：如果还能看到桶，重置计数器继续尝试
-            red_barrels_check = self.get_target_barrels()
-            if red_barrels_check:
-                best_check = max(red_barrels_check, key=lambda b: b.size)
-                if best_check.size > 2000:  # 还能看到较大的桶
-                    self.get_logger().info(f'APPROACHING timeout but barrel visible (size={best_check.size:.0f}), repositioning and retry')
-                    # 向空旷方向移动一点再继续
-                    self.approach_counter = 200  # 重置但不完全清零，给10秒继续尝试
-                    self.approach_reposition_counter = 0
-                    self.state = State.APPROACH_REPOSITION
-                    return
-            # 看不到桶或桶太小，放弃
             self.get_logger().warn(f'APPROACHING timeout ({self.approach_counter} ticks), giving up')
             self.approach_target = None
-            self.nav_path_points = []  # 清空路径
+            self.nav_path_points = []
             self.state = State.SEARCHING
             return
 
+        # ========== 快速 pickup 检测 ==========
+        # 如果前方非常近且有桶可见，直接尝试 pickup！
         red_barrels = self.get_target_barrels()
+        if red_barrels and self.front_min_dist < 0.45:
+            best = max(red_barrels, key=lambda b: b.size)
+            if best.size > 8000:  # 桶足够大（足够近）
+                self.get_logger().info(f'[APPROACH] Close enough! front={self.front_min_dist:.2f}m size={best.size:.0f}, trying pickup directly!')
+                self._try_direct_pickup()
+                return
+
+        # ========== Vision API 导航 ==========
+        vision_action = None
+        if self.llm_enabled and self.latest_image is not None:
+            action, ready = self.llm.vision_approach_barrel(
+                self.latest_image,
+                self.front_min_dist,
+                target_color="red"
+            )
+            if ready:
+                # Vision API 确认可以 pickup
+                self.get_logger().info('[VISION-APPROACH] Ready to pickup!')
+                self._try_direct_pickup()
+                return
+            if action:
+                vision_action = action
+                if action == "SEARCH":
+                    # Vision 看不到桶，切换到搜索模式
+                    self.lost_sight_counter += 1
+                    if self.lost_sight_counter > 30:
+                        self.get_logger().warn('[VISION-APPROACH] Cannot find barrel, back to SEARCHING')
+                        self.state = State.SEARCHING
+                        return
+                else:
+                    self.lost_sight_counter = 0
+
+        # ========== 执行动作 ==========
         twist = Twist()
 
-        # 检查是否可以进入RAMMING
-        if red_barrels:
+        if vision_action and vision_action != "SEARCH":
+            # Vision API 给出了方向
+            action_speeds = {
+                "FORWARD": (0.30, 0.0),
+                "FORWARD_FAST": (0.40, 0.0),
+                "FORWARD_LEFT": (0.25, 0.4),
+                "FORWARD_RIGHT": (0.25, -0.4),
+                "TURN_LEFT": (0.05, 0.6),
+                "TURN_RIGHT": (0.05, -0.6),
+            }
+            linear, angular = action_speeds.get(vision_action, (0.25, 0.0))
+            twist.linear.x = linear
+            twist.angular.z = angular
+
+            if self.approach_counter % 10 == 0:
+                self.get_logger().info(f'[VISION-APPROACH] action={vision_action} front={self.front_min_dist:.2f}m')
+
+        elif red_barrels:
+            # Fallback: 规则视觉伺服
             self.lost_sight_counter = 0
             best = max(red_barrels, key=lambda b: b.size)
             x_offset = best.x - self.IMAGE_CENTER_X
 
-            # 检查是否足够近可以RAMMING
-            # 必须: 桶可见且非常大(>25000) AND LiDAR距离足够近(<0.8m)
-            if best.size > self.BARREL_SIZE_COMMIT and self.front_min_dist < 0.8:
-                self.get_logger().info(f'BARREL VERY CLOSE! size={best.size:.0f} front={self.front_min_dist:.2f}m -> RAMMING')
-                self.stop_robot()
-                self.approach_target = None
-                self.set_lidar_mask('front')  # 屏蔽前方雷达
-                self.ram_counter = 0
-                self.ram_phase = 0
-                self.turn_counter = 0
-                self.lost_sight_counter = 0
-                # 预规划到GREEN的路径，pickup成功后直接用
-                self.preplan_path_to_green()
-                self.state = State.RAMMING
-                return
-
-            # ========== 纯视觉导航 + 雷达避墙 ==========
-            # 检查各方向障碍物（降低阈值，0.5m对于接近桶太保守了）
-            front_blocked = self.front_min_dist < 0.4
-            front_left_blocked = self.front_left_min_dist < 0.35
-            front_right_blocked = self.front_right_min_dist < 0.35
-            left_close = self.left_side_min_dist < 0.35
-            right_close = self.right_side_min_dist < 0.35
-
-            # 首先处理紧急情况：前方太近，必须后退
+            # 紧急避障
             if self.front_min_dist < 0.3:
                 twist.linear.x = -0.15
-                # 向空旷方向转
-                if self.left_side_min_dist > self.right_side_min_dist:
-                    twist.angular.z = 0.4
-                else:
-                    twist.angular.z = -0.4
-                if self.approach_counter % 10 == 0:
-                    self.get_logger().info(f'APPROACHING: Emergency backup, front={self.front_min_dist:.2f}m')
-
-            # 前方有障碍，需要绕行（但保持向前移动）
-            elif front_blocked or front_left_blocked or front_right_blocked:
-                # 向桶的方向绕行，同时保持前进
-                if x_offset < 0:
-                    # 桶在左边，向左绕
-                    twist.angular.z = 0.4
-                else:
-                    # 桶在右边，向右绕
-                    twist.angular.z = -0.4
-                # 始终保持前进（除非前方真的很近）
-                twist.linear.x = 0.15 if self.front_min_dist > 0.35 else 0.08
-
-                if self.approach_counter % 10 == 0:
-                    self.get_logger().info(f'APPROACHING: Obstacle avoidance, front={self.front_min_dist:.2f}m barrel_x={x_offset:.0f}')
-
-            # 侧面靠近墙壁，需要修正方向
-            elif left_close or right_close:
-                # 基础视觉伺服
-                twist.angular.z = -0.005 * x_offset
-                twist.linear.x = 0.2
-
-                # 叠加避墙修正
-                if left_close and not right_close:
-                    # 左边有墙，向右偏
-                    twist.angular.z -= 0.3
-                elif right_close and not left_close:
-                    # 右边有墙，向左偏
-                    twist.angular.z += 0.3
-
+                twist.angular.z = 0.5 if self.left_side_min_dist > self.right_side_min_dist else -0.5
+            else:
+                # 视觉伺服
+                twist.angular.z = -0.006 * x_offset
                 twist.angular.z = max(-0.8, min(0.8, twist.angular.z))
 
-                if self.approach_counter % 10 == 0:
-                    self.get_logger().info(f'APPROACHING: Wall correction, L={self.left_side_min_dist:.2f}m R={self.right_side_min_dist:.2f}m')
-
-            else:
-                # 前方和侧面都空旷，纯视觉伺服前进
-                # 角速度：比例控制，保持桶在画面中心
-                # 增大增益让转向更积极
-                twist.angular.z = -0.008 * x_offset
-                twist.angular.z = max(-1.0, min(1.0, twist.angular.z))
-
-                # 线速度：根据偏移调整，偏移大时几乎停下来专心转向
-                if abs(x_offset) > 150:
-                    # 偏移较大，先转向为主，几乎不前进
-                    twist.linear.x = 0.05
-                elif abs(x_offset) > 80:
-                    # 中等偏移，慢速前进
-                    twist.linear.x = 0.12
+                if abs(x_offset) > 120:
+                    twist.linear.x = 0.08
                 elif best.size > 15000:
-                    # 桶很大（很近），慢速接近
                     twist.linear.x = 0.18
                 else:
-                    # 桶基本居中，正常前进
-                    twist.linear.x = 0.22
+                    twist.linear.x = 0.28
 
-                if self.approach_counter % 10 == 0:
-                    self.get_logger().info(f'APPROACHING: Visual servo, size={best.size:.0f} x={x_offset:.0f} front={self.front_min_dist:.2f}m')
-
-            self.cmd_vel_pub.publish(twist)
+            if self.approach_counter % 10 == 0:
+                self.get_logger().info(f'[APPROACH] Fallback servo, size={best.size:.0f} x={x_offset:.0f} front={self.front_min_dist:.2f}m')
 
         else:
-            # 丢失桶的视野
+            # 看不到桶
             self.lost_sight_counter += 1
-
             if self.lost_sight_counter <= 30:
-                # 短暂丢失（3秒内），原地转向寻找
-                # 向最后看到桶的方向转
-                if hasattr(self, '_last_barrel_direction'):
-                    twist.angular.z = 0.4 if self._last_barrel_direction < 0 else -0.4
-                else:
-                    twist.angular.z = 0.4  # 默认左转
-                self.cmd_vel_pub.publish(twist)
-
+                twist.angular.z = 0.5
                 if self.lost_sight_counter % 10 == 0:
-                    self.get_logger().info(f'APPROACHING: Lost sight, searching... ({self.lost_sight_counter} ticks)')
+                    self.get_logger().info(f'[APPROACH] Lost sight, searching...')
             else:
-                # 丢失视野太久，返回SEARCHING
-                self.get_logger().warn(f'Lost sight for too long ({self.lost_sight_counter} ticks) -> back to SEARCHING')
-                self.stop_robot()
-                self.approach_target = None
-                self.nav_path_points = []  # 清空路径，避免SEARCHING继续跟随旧路径
+                self.get_logger().warn('[APPROACH] Lost sight too long, back to SEARCHING')
                 self.state = State.SEARCHING
                 return
 
-        # 记录桶的方向，用于丢失时转向
-        if red_barrels:
-            best = max(red_barrels, key=lambda b: b.size)
-            self._last_barrel_direction = best.x - self.IMAGE_CENTER_X
+        # 紧急避障覆盖
+        if self.front_min_dist < 0.25 and twist.linear.x > 0:
+            twist.linear.x = -0.15
+            twist.angular.z = 0.6 if self.left_side_min_dist > self.right_side_min_dist else -0.6
+
+        self.cmd_vel_pub.publish(twist)
+
+    def _try_direct_pickup(self):
+        """直接尝试 pickup，跳过 RAMMING 旋转。
+
+        如果前方足够近，直接调用 pickup 服务。
+        成功则进入 RECOVER_LOCALIZATION，失败则继续 APPROACHING。
+        """
+        if self.service_pending:
+            return
+
+        self.get_logger().info('[DIRECT-PICKUP] Attempting pickup without rotation!')
+
+        request = ItemRequest.Request()
+        request.robot_id = self.robot_name
+        self.service_future = self.pickup_client.call_async(request)
+        self.service_pending = True
+
+        # 等待一小会儿检查结果
+        # 实际上需要在下一个 tick 检查，这里设置状态
+        self._direct_pickup_pending = True
+        self._direct_pickup_start = self.approach_counter
+
+    def _check_direct_pickup_result(self):
+        """检查直接 pickup 的结果。在 control_loop 中调用。"""
+        if not hasattr(self, '_direct_pickup_pending') or not self._direct_pickup_pending:
+            return False
+
+        if self.service_future is None:
+            self._direct_pickup_pending = False
+            return False
+
+        if not self.service_future.done():
+            # 等待中，继续等待但限制时间
+            if self.approach_counter - self._direct_pickup_start > 30:  # 3秒超时
+                self.get_logger().warn('[DIRECT-PICKUP] Timeout, continue approaching')
+                self._direct_pickup_pending = False
+                self.service_pending = False
+            return True  # 还在处理中
+
+        result = self.service_future.result()
+        self._direct_pickup_pending = False
+        self.service_pending = False
+        self.service_future = None
+
+        if result and result.success:
+            self.get_logger().info(f'[DIRECT-PICKUP] SUCCESS! {result.message}')
+            self.has_barrel = True
+            self.collected_count += 1
+            self.set_lidar_mask('rear')
+            self.clear_costmaps(reset_obstacle_layer=True)
+            self.waypoint_before_pickup = self.current_waypoint_idx
+            self.llm.log_event("barrel_collected", {
+                "count": self.collected_count,
+                "position": (self.map_x, self.map_y),
+                "method": "direct_pickup"
+            })
+            # 直接进入导航到 GREEN
+            self.state = State.NAVIGATING_TO_GREEN
+            return True
+        else:
+            # Direct pickup 失败，降级到 RAMMING 流程
+            self.get_logger().info('[DIRECT-PICKUP] Failed, falling back to RAMMING rotation')
+            self.set_lidar_mask('front')
+            self.ram_counter = 0
+            self.ram_phase = 0
+            self.turn_counter = 0
+            self.preplan_path_to_green()
+            self.state = State.RAMMING
+            return True  # 返回 True 表示已处理，不继续 APPROACHING
 
     def _handle_approach_reposition(self):
         """APPROACH_REPOSITION: 向空旷方向移动一点后重试APPROACHING。
@@ -2365,24 +3020,37 @@ class CleanerBot(Node):
                     return
 
         # Phase 4: 向后倒车 (已旋转180°，桶在背后) 并持续尝试pickup
+        # 使用后方 LiDAR 数据来微调方向，确保对准桶
         elif self.ram_phase == 4:
             twist.linear.x = -0.15  # 倒车撞桶
 
-            # 强制航向保持，忽略墙壁避让（靠rear mask屏蔽桶）
-            if hasattr(self, 'ram_target_yaw'):
-                yaw_error = self.map_yaw - self.ram_target_yaw
-                # 归一化到 -π 到 π
-                while yaw_error > math.pi:
-                    yaw_error -= 2 * math.pi
-                while yaw_error < -math.pi:
-                    yaw_error += 2 * math.pi
+            # 用后方左右两侧的LiDAR距离差来判断桶的偏移
+            # 桶在哪一侧，那一侧的距离会更近
+            rear_left_dist = self._get_lidar_range_at_angle(135)   # 左后方
+            rear_right_dist = self._get_lidar_range_at_angle(225)  # 右后方
+            rear_center_dist = self.rear_min_dist
 
-                # 强航向保持，增益1.0
-                twist.angular.z = -1.0 * yaw_error
-                # 限制角速度
-                twist.angular.z = max(-0.5, min(0.5, twist.angular.z))
+            # 如果后方中心有障碍物，用左右差来调整
+            if rear_center_dist < 1.5:
+                diff = rear_left_dist - rear_right_dist
+                # 如果左后更近，说明桶偏左，需要左转（逆时针）来对准
+                # 如果右后更近，说明桶偏右，需要右转（顺时针）来对准
+                if abs(diff) > 0.1:
+                    twist.angular.z = 0.3 if diff < 0 else -0.3
+                else:
+                    twist.angular.z = 0.0
             else:
-                twist.angular.z = 0.0
+                # 后方没有障碍物，用航向保持
+                if hasattr(self, 'ram_target_yaw'):
+                    yaw_error = self.map_yaw - self.ram_target_yaw
+                    while yaw_error > math.pi:
+                        yaw_error -= 2 * math.pi
+                    while yaw_error < -math.pi:
+                        yaw_error += 2 * math.pi
+                    twist.angular.z = -1.0 * yaw_error
+                    twist.angular.z = max(-0.5, min(0.5, twist.angular.z))
+                else:
+                    twist.angular.z = 0.0
 
         self.cmd_vel_pub.publish(twist)
 
