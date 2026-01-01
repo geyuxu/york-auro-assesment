@@ -942,6 +942,41 @@ class CleanerBot(Node):
                     self.last_nav_goal_time = now
                     self.has_started_navigation = True  # 标记已开始导航
 
+        # 墙壁避让：Nav2导航时，如果一侧靠近墙壁，稍微向另一侧转向
+        if self.is_navigation_active():
+            self._apply_wall_avoidance()
+
+    def _apply_wall_avoidance(self):
+        """根据左右两侧雷达距离，给小车一点转向速度避免蹭墙。
+
+        条件：
+        - 只有一侧靠近墙壁时才转向
+        - 两侧都有墙或都没墙时不转向
+        - 距离墙较远时不转向
+        """
+        WALL_CLOSE_THRESHOLD = 0.5   # 靠近墙壁的阈值
+        TURN_SPEED = 0.15            # 转向速度
+
+        left_dist = self.left_side_min_dist
+        right_dist = self.right_side_min_dist
+
+        left_close = left_dist < WALL_CLOSE_THRESHOLD
+        right_close = right_dist < WALL_CLOSE_THRESHOLD
+
+        twist = Twist()
+        twist.linear.x = 0.0  # 不影响前进速度，Nav2控制
+
+        # 只有一侧靠近墙壁时才转向
+        if left_close and not right_close:
+            # 左边有墙，向右转
+            twist.angular.z = -TURN_SPEED
+            self.cmd_vel_pub.publish(twist)
+        elif right_close and not left_close:
+            # 右边有墙，向左转
+            twist.angular.z = TURN_SPEED
+            self.cmd_vel_pub.publish(twist)
+        # 两边都有墙或两边都远，不转向（让Nav2处理）
+
     def _handle_scanning(self):
         """SCANNING: 到达巡视点后左右扫描寻找红桶。
 
