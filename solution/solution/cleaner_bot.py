@@ -21,6 +21,9 @@ from enum import Enum, auto
 
 import rclpy
 from rclpy.node import Node
+
+# LLM interface for decision making
+from . import llm_interface as llm
 from rclpy.executors import ExternalShutdownException
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, QoSPresetProfiles
@@ -176,7 +179,7 @@ class CleanerBot(Node):
 
         # Search waypoints - 手动测量值
         self.search_waypoints = [
-             (-3.3,-11),(0,-12),(6.75,-11),(14,-11),(12.9,-17),(6,-15)
+             (1.5,-5.3),(-3.3,-11),(0,-12),(6.75,-11),(14,-11),(12.9,-17),(6,-15)
             # (2, 2),
             # (9.8, 6.0),
             # (10.0, 6.0),
@@ -208,7 +211,7 @@ class CleanerBot(Node):
         # Zone locations (Gazebo世界坐标，地图已旋转对齐)
         # self.cyan_zone_approx = (7.5, 9.4)     # 消毒区
         # self.green_zone_approx = (13.5, 9.4)   # 交付区A
-        self.cyan_zone_approx = (-9.3, -12.0)     # 消毒区
+        self.cyan_zone_approx = (-8.89, -12.6)     # 消毒区
         self.green_zone_approx = (-15.0, -12.0)   # 交付区A
 
         # Publishers
@@ -787,6 +790,20 @@ class CleanerBot(Node):
         #         self.last_pos_x = self.map_x
         #         self.last_pos_y = self.map_y
 
+        # LLM decision point: Ask LLM if it wants to override the next action
+        llm_action = llm.decide_next_action(
+            current_state=self.state.name,
+            robot_position=(self.map_x, self.map_y),
+            robot_yaw=self.map_yaw,
+            visible_barrels=[{'color': b.colour, 'size': b.size, 'x': b.x, 'y': b.y} for b in self.visible_barrels],
+            visible_zones=[{'zone': z.zone, 'size': z.size, 'x': z.x, 'y': z.y} for z in self.visible_zones],
+            has_barrel=self.has_barrel,
+            collected_count=self.collected_count,
+            radiation_level=self.current_radiation,
+        )
+        # If LLM returns an action, it could override state machine (not implemented yet)
+        _ = llm_action  # Placeholder for future use
+
         # State machine
         if self.state == State.IDLE:
             self.stop_robot()
@@ -905,6 +922,12 @@ class CleanerBot(Node):
             if elapsed > self.NAV_TIMEOUT:
                 wp = self.search_waypoints[self.current_waypoint_idx]
                 self.get_logger().warn(f'Nav timeout ({elapsed:.0f}s) for waypoint {self.current_waypoint_idx + 1} ({wp[0]}, {wp[1]}), skipping!')
+                # LLM event: navigation timeout
+                llm.log_event('navigation_timeout', {
+                    'waypoint': wp,
+                    'elapsed': elapsed,
+                    'position': (self.map_x, self.map_y),
+                })
                 self.cancel_navigation()
                 self.clear_costmaps()  # 清除可能的错误障碍物
                 self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
@@ -1038,13 +1061,18 @@ class CleanerBot(Node):
         """
         self.approach_counter += 1
 
-        # APPROACHING超时：如果300 ticks (30秒) 还没进入RAMMING，放弃
-        MAX_APPROACH_TICKS = 300
+        # 第一次进入时清除costmaps，避免之前的"幽灵障碍物"影响导航
+        if self.approach_counter == 1:
+            self.clear_costmaps()
+
+        # APPROACHING超时：如果600 ticks (60秒) 还没进入RAMMING，放弃
+        MAX_APPROACH_TICKS = 600
         if self.approach_counter > MAX_APPROACH_TICKS:
             self.get_logger().warn(f'APPROACHING timeout ({self.approach_counter} ticks), giving up')
             self.cancel_navigation()
             self.approach_target = None
             self.set_lidar_mask('none')
+            self.clear_costmaps()  # 清除可能导致卡住的障碍物
             self.state = State.SEARCHING
             return
 
@@ -1096,6 +1124,19 @@ class CleanerBot(Node):
 
         else:
             self.lost_sight_counter += 1
+            # 如果已经很近了(<0.8m)，即使看不到桶也直接进入RAMMING
+            # 桶可能太近超出了视野范围
+            if self.front_min_dist < 0.8:
+                self.get_logger().info(f'Lost sight but very close (front={self.front_min_dist:.2f}m) -> RAMMING')
+                self.cancel_navigation()
+                self.approach_target = None
+                self.set_lidar_mask('front')
+                self.ram_counter = 0
+                self.ram_phase = 0
+                self.turn_counter = 0
+                self.lost_sight_counter = 0
+                self.state = State.RAMMING
+                return
             # 丢失视野太久，可能桶被推开或者根本不是桶
             # 不要轻易进入RAMMING，返回SEARCHING重新寻找
             if self.lost_sight_counter > 30:  # 3秒看不到桶
@@ -1135,12 +1176,13 @@ class CleanerBot(Node):
         """
         self.ram_counter += 1
 
-        # 超时检测：如果Phase 2旋转太久(50秒)或Phase 4倒车太久(30秒)，放弃
-        MAX_PHASE2_TICKS = 500  # 50秒
-        MAX_PHASE4_TICKS = 300  # 30秒
+        # 超时检测：Phase 2旋转超时用turn_counter，Phase 4倒车超时用ram_counter
+        MAX_PHASE2_TICKS = 400  # 40秒 (用turn_counter计数，从Phase 2开始)
+        MAX_PHASE4_TICKS = 300  # 30秒 (用ram_counter计数，从Phase 4开始)
 
-        if self.ram_phase == 2 and self.ram_counter > MAX_PHASE2_TICKS:
-            self.get_logger().warn(f'RAMMING: Phase 2 timeout ({self.ram_counter} ticks), abandoning barrel')
+        # Phase 2超时：使用turn_counter，因为它是从Phase 2开始计数的
+        if self.ram_phase == 2 and hasattr(self, 'turn_counter') and self.turn_counter > MAX_PHASE2_TICKS:
+            self.get_logger().warn(f'RAMMING: Phase 2 timeout ({self.turn_counter} ticks), abandoning barrel')
             self.stop_robot()
             self.set_lidar_mask('none')
             self.clear_costmaps()  # 清除RAMMING期间积累的错误障碍物
@@ -1153,6 +1195,7 @@ class CleanerBot(Node):
             self.state = State.SEARCHING
             return
 
+        # Phase 4超时：ram_counter在进入Phase 4时已重置为0
         if self.ram_phase == 4 and self.ram_counter > MAX_PHASE4_TICKS:
             self.get_logger().warn(f'RAMMING: Phase 4 timeout ({self.ram_counter} ticks), abandoning barrel')
             self.stop_robot()
@@ -1188,6 +1231,11 @@ class CleanerBot(Node):
                     self.recover_phase = 0
                     self.state = State.RECOVER_LOCALIZATION
                     self.get_logger().info(f'Pickup success! -> RECOVER_LOCALIZATION (will return to waypoint {self.current_waypoint_idx + 1})')
+                    # LLM event: barrel collected
+                    llm.log_event('barrel_collected', {
+                        'count': self.collected_count,
+                        'position': (self.map_x, self.map_y),
+                    })
                     self.service_pending = False
                     self.service_future = None
                     return
@@ -1214,20 +1262,29 @@ class CleanerBot(Node):
         # Phase 0: 向前靠近红桶直到足够近 (约1.5个机器人直径)
         # 使用视觉伺服保持对准红桶，避免撞到蓝桶
         if self.ram_phase == 0:
-            red_barrels = self.get_red_barrels()
-            if self.front_min_dist > 0.4:
-                twist.linear.x = 0.1  # 慢速向前
+            # Phase 0超时检查：300个tick(30秒)没到达目标距离就强制进入下一阶段
+            if self.ram_counter > 300:
+                self.get_logger().warn(f'Phase 0 timeout (30s), forcing phase 1. front={self.front_min_dist:.2f}m')
+                self.ram_phase = 1
+                self.ram_counter = 0
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+            elif self.front_min_dist > 0.4:
+                # 始终向前移动，这是主要目标
+                twist.linear.x = 0.15  # 稍微加快前进速度
 
-                # 如果能看到红桶，保持对准
+                # 视觉伺服对准红桶，但限制角速度以免过度旋转
+                red_barrels = self.get_red_barrels()
                 if red_barrels:
                     best_red = max(red_barrels, key=lambda b: b.size)
                     x_offset = best_red.x - self.IMAGE_CENTER_X
-                    # 用角速度修正方向，保持对准红桶
-                    if abs(x_offset) > 30:
-                        twist.angular.z = -0.3 if x_offset > 0 else 0.3
+                    # 只有偏移较大时才修正，且使用更小的角速度
+                    if abs(x_offset) > 50:  # 增大死区
+                        twist.angular.z = -0.15 if x_offset > 0 else 0.15  # 减小角速度
                     else:
                         twist.angular.z = 0.0
                 else:
+                    # 看不到红桶时保持直行
                     twist.angular.z = 0.0
             else:
                 self.get_logger().info(f'Close enough (front={self.front_min_dist:.2f}m), stopping')
@@ -1249,7 +1306,7 @@ class CleanerBot(Node):
         elif self.ram_phase == 2:
             self.turn_counter += 1
             twist.linear.x = 0.0
-            twist.angular.z = 0.8  # 左转 (逆时针)
+            twist.angular.z = 1.0  # 左转 (逆时针)
 
             # 记录起始角度和上一次角度（第一次进入时）
             if not hasattr(self, 'ram_start_yaw'):
@@ -1421,8 +1478,6 @@ class CleanerBot(Node):
 
         # 继续导航
         if not self.is_navigation_active():
-            # 每次重发导航目标前清除costmap
-            self.clear_costmaps()
             if self.green_nav_counter % 50 == 1:
                 self.get_logger().info(f'Going to GREEN zone... counter={self.green_nav_counter}')
             self.send_nav_goal(self.green_zone_approx[0], self.green_zone_approx[1])
