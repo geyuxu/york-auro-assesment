@@ -1082,9 +1082,15 @@ class CleanerBot(Node):
             self.cancel_navigation()
             self.state = State.NAVIGATING_TO_CYAN
 
-        # LLM decision checkpoint (only during certain states that allow interruption)
-        # Don't interrupt time-critical states like RAMMING, RECOVER_LOCALIZATION, DELIVERING
-        if self.state in [State.SEARCHING, State.SCANNING, State.IDLE]:
+        # LLM decision checkpoint - check in most states except time-critical ones
+        # Don't interrupt: RAMMING (pickup in progress), RECOVER_LOCALIZATION (AMCL fix),
+        # DELIVERING/DECONTAMINATING (service calls in progress)
+        interruptible_states = [
+            State.SEARCHING, State.SCANNING, State.IDLE,
+            State.APPROACHING, State.NAVIGATING_TO_GREEN, State.NAVIGATING_TO_CYAN,
+            State.POST_DELIVER_REPOSITION, State.APPROACH_REPOSITION
+        ]
+        if self.state in interruptible_states:
             if self._check_llm_decision():
                 # LLM took control, skip normal state machine this tick
                 return

@@ -230,11 +230,14 @@ ACTIONS (respond with ONE):
 - WAIT: Stop and wait (emergency only)
 
 DECISION GUIDELINES:
-1. If barrel visible (size>3000) and not carrying one -> APPROACH
+1. If NOT carrying barrel and barrel visible (size>3000) -> APPROACH (collect it!)
 2. If carrying barrel -> CONTINUE (let it deliver)
 3. If radiation > 50 and not carrying barrel -> DECONTAMINATE
 4. If front distance < 0.3m -> might be stuck, CONTINUE to let recovery handle
-5. Most of time -> CONTINUE (trust the state machine)
+5. If NAVIGATING_TO_GREEN/CYAN but see a barrel very close (size>5000) and NOT carrying -> APPROACH
+6. Most of time -> CONTINUE (trust the state machine)
+
+IMPORTANT: If robot sees a barrel nearby (large size) and is NOT carrying one, it should APPROACH to collect it, even if currently navigating somewhere else!
 
 Respond with ONLY the action name."""
 
