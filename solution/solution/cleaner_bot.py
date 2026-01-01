@@ -37,6 +37,7 @@ from sensor_msgs.msg import LaserScan
 from assessment_interfaces.msg import BarrelList, ZoneList, Barrel, Zone, RadiationList
 from auro_interfaces.srv import ItemRequest
 from nav2_msgs.action import NavigateToPose
+from nav_msgs.msg import Path
 
 # TF imports removed - using AMCL pose directly instead
 from rcl_interfaces.srv import SetParameters
@@ -126,6 +127,12 @@ class CleanerBot(Node):
         self.nav_goal_handle = None
         self.nav_result_future = None
         self.nav_active = False
+
+        # Path following state (直接驾驶跟随Nav2规划的路径)
+        # 注意：nav_path_points 是Nav2规划的路径点，和 search_waypoints（巡航点）完全不同！
+        self.nav_path_points = []  # Nav2规划的路径点列表 (NOT search_waypoints!)
+        self.nav_path_idx = 0  # 当前跟随的路径点索引
+        self.use_direct_drive = True  # 使用直接驾驶跟随路径（而不是让Nav2控制）
 
         # Stuck detection
         self.last_pos_x = 0.0
@@ -248,6 +255,12 @@ class CleanerBot(Node):
             QoSPresetProfiles.SENSOR_DATA.value,
             callback_group=self.callback_group)
 
+        # Subscribe to Nav2 planned path (用于直接驾驶跟随)
+        plan_topic = f'{self.robot_namespace}/plan'
+        self.plan_sub = self.create_subscription(
+            Path, plan_topic, self.plan_callback, 10,
+            callback_group=self.callback_group)
+
         # Service clients
         self.pickup_client = self.create_client(
             ItemRequest, '/pick_up_item',
@@ -292,6 +305,14 @@ class CleanerBot(Node):
             callback_group=self.service_callback_group)
         self.clear_local_costmap_client = self.create_client(
             Empty, f'{self.robot_namespace}/local_costmap/clear_entirely_local_costmap',
+            callback_group=self.service_callback_group)
+
+        # Costmap parameter clients (for disabling/enabling obstacle layer)
+        self.global_costmap_param_client = self.create_client(
+            SetParameters, f'{self.robot_namespace}/global_costmap/global_costmap/set_parameters',
+            callback_group=self.service_callback_group)
+        self.local_costmap_param_client = self.create_client(
+            SetParameters, f'{self.robot_namespace}/local_costmap/local_costmap/set_parameters',
             callback_group=self.service_callback_group)
 
         # Control timer
@@ -352,6 +373,27 @@ class CleanerBot(Node):
             if rad.robot_id == self.robot_name:
                 self.current_radiation = rad.level
                 break
+
+    def plan_callback(self, msg: Path):
+        """Handle Nav2 planned path - extract waypoints for direct drive following."""
+        if not msg.poses:
+            return
+
+        # 从Path消息中提取路径点（每隔几个点取一个，避免过于密集）
+        path_points = []
+        step = max(1, len(msg.poses) // 20)  # 最多取20个路径点
+        for i in range(0, len(msg.poses), step):
+            pose = msg.poses[i].pose
+            path_points.append((pose.position.x, pose.position.y))
+
+        # 确保包含最后一个点（目标点）
+        last_pose = msg.poses[-1].pose
+        if path_points[-1] != (last_pose.position.x, last_pose.position.y):
+            path_points.append((last_pose.position.x, last_pose.position.y))
+
+        self.nav_path_points = path_points
+        self.nav_path_idx = 0
+        self.get_logger().info(f'Received path with {len(msg.poses)} poses, extracted {len(path_points)} path points')
 
     def scan_callback(self, msg):
         if len(msg.ranges) < 360:
@@ -621,13 +663,44 @@ class CleanerBot(Node):
 
         self.dynamic_mask_param_client.call_async(request)
 
-    def clear_costmaps(self):
-        """Clear both global and local costmaps."""
+    def clear_costmaps(self, reset_obstacle_layer=False):
+        """Clear both global and local costmaps.
+
+        Args:
+            reset_obstacle_layer: If True, disable and re-enable obstacle layer
+                                  to completely reset it to static map only.
+        """
         self.get_logger().info('Clearing costmaps...')
         if self.clear_global_costmap_client.service_is_ready():
             self.clear_global_costmap_client.call_async(Empty.Request())
         if self.clear_local_costmap_client.service_is_ready():
             self.clear_local_costmap_client.call_async(Empty.Request())
+
+        # 彻底重置：先禁用obstacle layer，清除后再启用
+        if reset_obstacle_layer:
+            self.get_logger().info('Resetting obstacle layer...')
+            self._set_obstacle_layer_enabled(False)
+            # 用定时器延迟重新启用（给costmap时间清除）
+            self.create_timer(0.5, lambda: self._set_obstacle_layer_enabled(True),
+                              callback_group=self.callback_group)
+
+    def _set_obstacle_layer_enabled(self, enabled: bool):
+        """Enable or disable obstacle layer in costmaps."""
+        from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
+
+        param = Parameter()
+        param.name = 'obstacle_layer.enabled'
+        param.value = ParameterValue()
+        param.value.type = ParameterType.PARAMETER_BOOL
+        param.value.bool_value = enabled
+
+        request = SetParameters.Request()
+        request.parameters = [param]
+
+        if self.global_costmap_param_client.service_is_ready():
+            self.global_costmap_param_client.call_async(request)
+        if self.local_costmap_param_client.service_is_ready():
+            self.local_costmap_param_client.call_async(request)
 
     def send_nav_goal(self, x, y, yaw=0.0):
         if not self.use_nav2:
@@ -677,8 +750,8 @@ class CleanerBot(Node):
             # 导航失败（被取消、超时、无法规划路径等）
             self.get_logger().warn(f'Nav failed with status: {result.status}')
             self.nav_fail_count += 1
-            # 每次失败都清除costmap，避免幽灵障碍物累积
-            self.clear_costmaps()
+            # 每次失败都彻底清除costmap，避免幽灵障碍物累积
+            self.clear_costmaps(reset_obstacle_layer=True)
             if self.nav_fail_count >= self.MAX_NAV_FAILS:
                 self.get_logger().warn(f'Nav failed {self.nav_fail_count} times, skipping waypoint')
                 self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
@@ -912,51 +985,70 @@ class CleanerBot(Node):
                 return
 
         # Continue patrol
+        wp = self.search_waypoints[self.current_waypoint_idx]
+        dist_to_wp = math.sqrt((self.map_x - wp[0])**2 + (self.map_y - wp[1])**2)
+
+        # 检查是否已经到达当前巡视点附近
+        if dist_to_wp < 1.0:
+            # 已到达巡视点，进入SCANNING状态左右扫描
+            self.get_logger().info(f'Arrived at waypoint {self.current_waypoint_idx + 1}, starting left-right scan')
+            self.cancel_navigation()
+            self.stop_robot()
+            self.scan_start_yaw = self.map_yaw
+            self.scan_phase = 0  # 从向左转开始
+            self.scan_counter = 0  # 重置扫描计数器
+            self.state = State.SCANNING
+            return
+
         # 检查导航超时 - 如果导航太久没到达，跳过这个巡视点
         if self.is_navigation_active() and self.nav_start_time is not None:
             elapsed = (self.get_clock().now() - self.nav_start_time).nanoseconds / 1e9
             if elapsed > self.NAV_TIMEOUT:
-                wp = self.search_waypoints[self.current_waypoint_idx]
-                self.get_logger().warn(f'Nav timeout ({elapsed:.0f}s) for waypoint {self.current_waypoint_idx + 1} ({wp[0]}, {wp[1]}), skipping!')
+                self.get_logger().warn(f'Nav timeout ({elapsed:.0f}s) for waypoint {self.current_waypoint_idx + 1}, skipping!')
                 self.cancel_navigation()
-                self.clear_costmaps()  # 清除可能的错误障碍物
+                self.clear_costmaps(reset_obstacle_layer=True)
                 self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
                 self.nav_start_time = None
                 return
 
-        if not self.is_navigation_active():
-            wp = self.search_waypoints[self.current_waypoint_idx]
-            # 检查是否已经到达当前巡视点附近
-            dist_to_wp = math.sqrt((self.map_x - wp[0])**2 + (self.map_y - wp[1])**2)
+        # 使用Nav2规划路径，然后用直接驾驶跟随
+        if self.use_direct_drive:
+            # 如果有路径，用直接驾驶跟随
+            if self.nav_path_points:
+                if not self._follow_path_with_avoidance():
+                    # 路径完成，到达目标
+                    self.get_logger().info(f'Arrived at waypoint {self.current_waypoint_idx + 1}, starting scan')
+                    self.cancel_navigation()
+                    self.nav_path_points = []
+                    self.stop_robot()
+                    self.scan_start_yaw = self.map_yaw
+                    self.scan_phase = 0
+                    self.scan_counter = 0
+                    self.state = State.SCANNING
+                return
 
-            # 必须满足三个条件才进入扫描：
-            # 1. 距离巡视点足够近 (<1.0m)
-            # 2. 已经发送过导航目标 (has_started_navigation)
-            # 3. 导航目标已经到达（不是刚启动就在附近）
-            if dist_to_wp < 1.0 and self.has_started_navigation and hasattr(self, '_nav_goal_reached'):
-                # 已到达巡视点，进入SCANNING状态左右扫描
-                self.get_logger().info(f'Arrived at waypoint {self.current_waypoint_idx + 1}, starting left-right scan')
-                self.scan_start_yaw = self.map_yaw
-                self.scan_phase = 0  # 从向左转开始
-                self.scan_counter = 0  # 重置扫描计数器
-                delattr(self, '_nav_goal_reached')  # 清除标记，下次需要重新导航
-                self.state = State.SCANNING
-            else:
-                # 还没到，或者刚启动，先导航到巡检点
-                # 防止重复发送目标（至少间隔2秒）
+            # 没有路径，请求Nav2规划
+            if not self.is_navigation_active():
+                now = self.get_clock().now()
+                if self.last_nav_goal_time is None or \
+                   (now - self.last_nav_goal_time).nanoseconds / 1e9 > self.MIN_NAV_GOAL_INTERVAL:
+                    self.get_logger().info(f'Requesting path to waypoint {self.current_waypoint_idx + 1}/{len(self.search_waypoints)}: ({wp[0]}, {wp[1]})')
+                    self.send_nav_goal(wp[0], wp[1])
+                    self.last_nav_goal_time = now
+        else:
+            # 使用Nav2直接控制（备用模式）
+            if not self.is_navigation_active():
                 now = self.get_clock().now()
                 if self.last_nav_goal_time is None or \
                    (now - self.last_nav_goal_time).nanoseconds / 1e9 > self.MIN_NAV_GOAL_INTERVAL:
                     self.get_logger().info(f'Waypoint {self.current_waypoint_idx + 1}/{len(self.search_waypoints)}: ({wp[0]}, {wp[1]})')
                     self.send_nav_goal(wp[0], wp[1])
                     self.last_nav_goal_time = now
-                    self.has_started_navigation = True  # 标记已开始导航
 
-        # 墙壁避让：Nav2导航时，如果一侧靠近墙壁，稍微向另一侧转向
-        if self.is_navigation_active():
-            self._apply_wall_avoidance()
-            # Nav2卡住检测：如果导航active但机器人长时间不动，重新规划
-            self._check_nav_stuck()
+            # 墙壁避让 + 卡住检测
+            if self.is_navigation_active():
+                self._apply_wall_avoidance()
+                self._check_nav_stuck()
 
     def _apply_wall_avoidance(self):
         """根据雷达距离，主动向空旷方向行走，避免蹭墙/撞墙角。
@@ -1054,10 +1146,10 @@ class CleanerBot(Node):
 
             self.cmd_vel_pub.publish(twist)
 
-            # 逃脱完成后，清除costmap让Nav2重新规划
+            # 逃脱完成后，彻底重置costmap（禁用并重新启用obstacle layer）
             if self._nav_stuck_escape_counter == 0:
-                self.get_logger().info('Escape complete, clearing costmap for re-planning')
-                self.clear_costmaps()
+                self.get_logger().info('Escape complete, resetting costmap to initial state')
+                self.clear_costmaps(reset_obstacle_layer=True)
                 self._nav_stuck_last_pos = (self.map_x, self.map_y)
             return
 
@@ -1079,6 +1171,102 @@ class CleanerBot(Node):
             # 有移动，重置计数器和位置
             self._nav_stuck_counter = 0
             self._nav_stuck_last_pos = (self.map_x, self.map_y)
+
+    def _follow_path_with_avoidance(self) -> bool:
+        """跟随Nav2规划的路径，使用直接驾驶+LiDAR避障。
+
+        Returns:
+            True if still following path, False if path completed or no path
+        """
+        if not self.nav_path_points or self.nav_path_idx >= len(self.nav_path_points):
+            return False
+
+        # 获取当前目标点
+        target = self.nav_path_points[self.nav_path_idx]
+        target_x, target_y = target
+
+        # 计算到当前路径点的距离
+        dx = target_x - self.map_x
+        dy = target_y - self.map_y
+        dist_to_waypoint = math.sqrt(dx*dx + dy*dy)
+
+        # 到达当前路径点，切换到下一个
+        WAYPOINT_TOLERANCE = 0.5  # 到达路径点的容差
+        if dist_to_waypoint < WAYPOINT_TOLERANCE:
+            self.nav_path_idx += 1
+            if self.nav_path_idx >= len(self.nav_path_points):
+                self.get_logger().info('Path following complete!')
+                self.nav_path_points = []
+                return False
+            self.get_logger().info(f'Reached path point {self.nav_path_idx}, next: {self.nav_path_points[self.nav_path_idx]}')
+            return True
+
+        # 计算目标方向
+        target_yaw = math.atan2(dy, dx)
+        yaw_error = target_yaw - self.map_yaw
+        # 归一化到 -π 到 π
+        while yaw_error > math.pi:
+            yaw_error -= 2 * math.pi
+        while yaw_error < -math.pi:
+            yaw_error += 2 * math.pi
+
+        twist = Twist()
+
+        # 检查障碍物
+        front_blocked = self.front_min_dist < 0.5
+        front_left_blocked = self.front_left_min_dist < 0.4
+        front_right_blocked = self.front_right_min_dist < 0.4
+        left_close = self.left_side_min_dist < 0.4
+        right_close = self.right_side_min_dist < 0.4
+
+        # 紧急后退
+        if self.front_min_dist < 0.35:
+            twist.linear.x = -0.15
+            if self.left_side_min_dist > self.right_side_min_dist:
+                twist.angular.z = 0.4
+            else:
+                twist.angular.z = -0.4
+            self.cmd_vel_pub.publish(twist)
+            return True
+
+        # 前方有障碍，绕行
+        if front_blocked or front_left_blocked or front_right_blocked:
+            twist.linear.x = 0.12
+            # 选择更空旷的方向绕行，同时考虑目标方向
+            if self.left_side_min_dist > self.right_side_min_dist:
+                twist.angular.z = 0.5  # 左绕
+            else:
+                twist.angular.z = -0.5  # 右绕
+            self.cmd_vel_pub.publish(twist)
+            return True
+
+        # 侧面有墙，修正方向
+        if left_close or right_close:
+            twist.angular.z = 0.8 * yaw_error
+            twist.angular.z = max(-0.6, min(0.6, twist.angular.z))
+            # 叠加避墙修正
+            if left_close and not right_close:
+                twist.angular.z -= 0.25
+            elif right_close and not left_close:
+                twist.angular.z += 0.25
+            twist.angular.z = max(-0.8, min(0.8, twist.angular.z))
+            twist.linear.x = 0.18
+            self.cmd_vel_pub.publish(twist)
+            return True
+
+        # 正常前进：朝向目标点
+        twist.angular.z = 0.8 * yaw_error
+        twist.angular.z = max(-0.6, min(0.6, twist.angular.z))
+
+        if abs(yaw_error) > 0.5:
+            # 方向偏差大，原地转向
+            twist.linear.x = 0.05
+        else:
+            # 方向正确，前进
+            twist.linear.x = 0.25
+
+        self.cmd_vel_pub.publish(twist)
+        return True
 
     def _handle_scanning(self):
         """SCANNING: 到达巡视点后左右扫描寻找红桶。
@@ -1200,6 +1388,7 @@ class CleanerBot(Node):
             # 看不到桶或桶太小，放弃
             self.get_logger().warn(f'APPROACHING timeout ({self.approach_counter} ticks), giving up')
             self.approach_target = None
+            self.nav_path_points = []  # 清空路径
             self.state = State.SEARCHING
             return
 
@@ -1332,6 +1521,7 @@ class CleanerBot(Node):
                 self.get_logger().warn(f'Lost sight for too long ({self.lost_sight_counter} ticks) -> back to SEARCHING')
                 self.stop_robot()
                 self.approach_target = None
+                self.nav_path_points = []  # 清空路径，避免SEARCHING继续跟随旧路径
                 self.state = State.SEARCHING
                 return
 
@@ -1386,6 +1576,7 @@ class CleanerBot(Node):
             # 看不到桶了，返回SEARCHING
             self.get_logger().warn('Lost barrel after reposition, back to SEARCHING')
             self.approach_target = None
+            self.nav_path_points = []  # 清空路径
             self.state = State.SEARCHING
 
     def _handle_ramming(self):
@@ -1410,13 +1601,14 @@ class CleanerBot(Node):
             self.get_logger().warn(f'RAMMING: Phase 2 timeout ({self.ram_counter} ticks), abandoning barrel')
             self.stop_robot()
             self.set_lidar_mask('none')
-            self.clear_costmaps()  # 清除RAMMING期间积累的错误障碍物
+            self.clear_costmaps(reset_obstacle_layer=True)  # 彻底清除RAMMING期间积累的幽灵障碍物
             if hasattr(self, 'ram_start_yaw'):
                 del self.ram_start_yaw
             if hasattr(self, 'ram_last_yaw'):
                 del self.ram_last_yaw
             if hasattr(self, 'ram_total_rotated'):
                 del self.ram_total_rotated
+            self.nav_path_points = []  # 清空路径
             self.state = State.SEARCHING
             return
 
@@ -1424,7 +1616,8 @@ class CleanerBot(Node):
             self.get_logger().warn(f'RAMMING: Phase 4 timeout ({self.ram_counter} ticks), abandoning barrel')
             self.stop_robot()
             self.set_lidar_mask('none')
-            self.clear_costmaps()  # 清除RAMMING期间积累的错误障碍物
+            self.clear_costmaps(reset_obstacle_layer=True)  # 彻底清除RAMMING期间积累的幽灵障碍物
+            self.nav_path_points = []  # 清空路径
             self.state = State.SEARCHING
             return
 
@@ -1583,6 +1776,7 @@ class CleanerBot(Node):
                     self.clear_costmaps()
                     if hasattr(self, 'expected_barrel_dist'):
                         del self.expected_barrel_dist
+                    self.nav_path_points = []  # 清空路径
                     self.state = State.SEARCHING
                     return
 
@@ -1659,8 +1853,8 @@ class CleanerBot(Node):
         elif self.recover_phase == 2:
             twist.linear.x = 0.0
             twist.angular.z = 0.0
-            # 清除costmap（AMCL定位修复后，基于正确位置重建）
-            self.clear_costmaps()
+            # 彻底清除costmap（AMCL定位修复后，基于正确位置重建）
+            self.clear_costmaps(reset_obstacle_layer=True)
             # 先去绿区放桶，再去消毒
             self.get_logger().info('RECOVER complete -> NAVIGATING_TO_GREEN (deliver first)')
             self.green_nav_counter = 0
@@ -1669,18 +1863,19 @@ class CleanerBot(Node):
         self.cmd_vel_pub.publish(twist)
 
     def _handle_nav_to_green(self):
-        """Navigate to green zone."""
-        # 初始化导航超时计数器
+        """Navigate to green zone using Nav2 + wall avoidance."""
+        # 初始化导航计数器
         if not hasattr(self, 'green_nav_counter'):
             self.green_nav_counter = 0
 
         self.green_nav_counter += 1
 
-        # 检查是否能看到 green zone（主要判断条件）
+        # 检查是否能看到 green zone
         green = self.get_green_zones()
-        if green and green[0].size > 300:  # 降低阈值，更容易检测到
+        if green and green[0].size > 300:
             self.get_logger().info(f'Green zone visible! size={green[0].size:.0f} -> DELIVERING')
             self.cancel_navigation()
+            self.stop_robot()
             self.green_nav_counter = 0
             self.state = State.DELIVERING
             self.service_pending = False
@@ -1694,32 +1889,131 @@ class CleanerBot(Node):
             if dist < 0.8:
                 self.get_logger().info(f'Within GREEN zone radius! dist={dist:.2f}m -> DELIVERING')
                 self.cancel_navigation()
+                self.stop_robot()
                 self.green_nav_counter = 0
                 self.state = State.DELIVERING
                 self.service_pending = False
                 return
 
-        # 防止Nav2假成功导致无限循环
+        # 超时处理
         if self.green_nav_counter > 6000:  # 600秒(10分钟)超时
             self.get_logger().warn('Green nav timeout (10min), forcing DELIVERING state')
             self.cancel_navigation()
+            self.nav_path_points = []
             self.green_nav_counter = 0
             self.state = State.DELIVERING
             self.service_pending = False
             return
 
-        # 继续导航
-        if not self.is_navigation_active():
-            # 每次重发导航目标前清除costmap
-            self.clear_costmaps()
-            if self.green_nav_counter % 50 == 1:
-                self.get_logger().info(f'Going to GREEN zone... counter={self.green_nav_counter}')
-            self.send_nav_goal(self.green_zone_approx[0], self.green_zone_approx[1])
+        # 使用Nav2规划路径，然后用直接驾驶跟随
+        if self.use_direct_drive:
+            # 如果有路径，用直接驾驶跟随
+            if self.nav_path_points:
+                if not self._follow_path_with_avoidance():
+                    # 路径完成
+                    self.get_logger().info('Path to GREEN complete, checking zone...')
+                    self.cancel_navigation()
+                    self.nav_path_points = []
+                return
 
-        # 墙壁避让：向空地走
-        if self.is_navigation_active():
-            self._apply_wall_avoidance()
-            self._check_nav_stuck()
+            # 没有路径，请求Nav2规划
+            if not self.is_navigation_active():
+                self.clear_costmaps(reset_obstacle_layer=True)
+                if self.green_nav_counter % 50 == 1:
+                    self.get_logger().info(f'Requesting path to GREEN zone... counter={self.green_nav_counter}')
+                self.send_nav_goal(self.green_zone_approx[0], self.green_zone_approx[1])
+        else:
+            # 使用Nav2直接控制（备用模式）
+            if not self.is_navigation_active():
+                self.clear_costmaps(reset_obstacle_layer=True)
+                if self.green_nav_counter % 50 == 1:
+                    self.get_logger().info(f'Going to GREEN zone... counter={self.green_nav_counter}')
+                self.send_nav_goal(self.green_zone_approx[0], self.green_zone_approx[1])
+
+            # 墙壁避让 + 卡住检测
+            if self.is_navigation_active():
+                self._apply_wall_avoidance()
+                self._check_nav_stuck()
+
+    def _direct_drive_to_target(self, target_x: float, target_y: float, label: str = "TARGET"):
+        """直接驾驶到目标点，使用雷达避障。
+
+        Args:
+            target_x, target_y: 目标坐标
+            label: 日志标签
+        """
+        twist = Twist()
+
+        # 计算到目标的方向
+        dx = target_x - self.map_x
+        dy = target_y - self.map_y
+        dist_to_target = math.sqrt(dx*dx + dy*dy)
+        target_yaw = math.atan2(dy, dx)
+        yaw_error = target_yaw - self.map_yaw
+
+        # 归一化到 -π 到 π
+        while yaw_error > math.pi:
+            yaw_error -= 2 * math.pi
+        while yaw_error < -math.pi:
+            yaw_error += 2 * math.pi
+
+        # 检查各方向障碍物
+        front_blocked = self.front_min_dist < 0.5
+        front_left_blocked = self.front_left_min_dist < 0.4
+        front_right_blocked = self.front_right_min_dist < 0.4
+        left_close = self.left_side_min_dist < 0.4
+        right_close = self.right_side_min_dist < 0.4
+
+        # 紧急后退
+        if self.front_min_dist < 0.35:
+            twist.linear.x = -0.15
+            if self.left_side_min_dist > self.right_side_min_dist:
+                twist.angular.z = 0.4
+            else:
+                twist.angular.z = -0.4
+
+        # 前方有障碍，绕行
+        elif front_blocked or front_left_blocked or front_right_blocked:
+            twist.linear.x = 0.1
+            # 选择更空旷的方向绕行
+            if self.left_side_min_dist > self.right_side_min_dist:
+                twist.angular.z = 0.5  # 左绕
+            else:
+                twist.angular.z = -0.5  # 右绕
+
+        # 侧面有墙，修正方向
+        elif left_close or right_close:
+            twist.angular.z = 0.8 * yaw_error
+            twist.angular.z = max(-0.6, min(0.6, twist.angular.z))
+            # 叠加避墙修正
+            if left_close and not right_close:
+                twist.angular.z -= 0.25
+            elif right_close and not left_close:
+                twist.angular.z += 0.25
+            twist.angular.z = max(-0.8, min(0.8, twist.angular.z))
+            twist.linear.x = 0.18
+
+        # 正常前进
+        else:
+            twist.angular.z = 0.8 * yaw_error
+            twist.angular.z = max(-0.6, min(0.6, twist.angular.z))
+
+            if abs(yaw_error) > 0.5:
+                # 方向偏差大，原地转向
+                twist.linear.x = 0.05
+            else:
+                # 方向正确，前进
+                twist.linear.x = 0.22
+
+        self.cmd_vel_pub.publish(twist)
+
+        # 日志（每2秒一次）
+        counter = getattr(self, 'green_nav_counter', 0) or getattr(self, 'cyan_nav_counter', 0)
+        if counter % 20 == 0:
+            self.get_logger().info(
+                f'{label} direct drive: dist={dist_to_target:.1f}m yaw_err={math.degrees(yaw_error):.0f}° '
+                f'front={self.front_min_dist:.2f}m'
+            )
 
     def _handle_delivering(self):
         """Deliver barrel at green zone - 进入绿区就放下桶."""
@@ -1780,23 +2074,24 @@ class CleanerBot(Node):
             # 移动完成，去消毒
             self.get_logger().info('POST_DELIVER_REPOSITION complete -> NAVIGATING_TO_CYAN')
             self.stop_robot()
-            self.clear_costmaps()
+            self.clear_costmaps(reset_obstacle_layer=True)  # 彻底清除幽灵障碍物
             self.cyan_nav_counter = 0
             self.state = State.NAVIGATING_TO_CYAN
 
     def _handle_nav_to_cyan(self):
-        """Navigate to cyan zone for decontamination."""
-        # 初始化导航超时计数器
+        """Navigate to cyan zone using Nav2 + wall avoidance."""
+        # 初始化导航计数器
         if not hasattr(self, 'cyan_nav_counter'):
             self.cyan_nav_counter = 0
 
         self.cyan_nav_counter += 1
 
-        # 检查是否能看到 cyan zone（主要判断条件）
+        # 检查是否能看到 cyan zone
         cyan = self.get_cyan_zones()
-        if cyan and cyan[0].size > 300:  # 降低阈值，更容易检测到
+        if cyan and cyan[0].size > 300:
             self.get_logger().info(f'Cyan zone visible! size={cyan[0].size:.0f} -> DECONTAMINATING')
             self.cancel_navigation()
+            self.stop_robot()
             self.cyan_nav_counter = 0
             self.state = State.DECONTAMINATING
             self.service_pending = False
@@ -1810,33 +2105,51 @@ class CleanerBot(Node):
             if dist < 0.8:
                 self.get_logger().info(f'Within CYAN zone radius! dist={dist:.2f}m -> DECONTAMINATING')
                 self.cancel_navigation()
+                self.stop_robot()
                 self.cyan_nav_counter = 0
                 self.state = State.DECONTAMINATING
                 self.service_pending = False
                 return
 
-        # 防止Nav2假成功导致无限循环：如果导航很快就"成功"但没看到zone，继续等待
-        # 最多等待6000个tick（600秒=10分钟），之后强制进入DECONTAMINATING尝试调用服务
+        # 超时处理
         if self.cyan_nav_counter > 6000:  # 600秒(10分钟)超时
             self.get_logger().warn('Cyan nav timeout (10min), forcing DECONTAMINATING state')
             self.cancel_navigation()
+            self.nav_path_points = []
             self.cyan_nav_counter = 0
             self.state = State.DECONTAMINATING
             self.service_pending = False
             return
 
-        # 继续导航（即使Nav2报成功也继续发送，直到看到zone或超时）
-        if not self.is_navigation_active():
-            # 每次重发导航目标前清除costmap
-            self.clear_costmaps()
-            if self.cyan_nav_counter % 50 == 1:
-                self.get_logger().info(f'Going to CYAN zone... counter={self.cyan_nav_counter}')
-            self.send_nav_goal(self.cyan_zone_approx[0], self.cyan_zone_approx[1])
+        # 使用Nav2规划路径，然后用直接驾驶跟随
+        if self.use_direct_drive:
+            # 如果有路径，用直接驾驶跟随
+            if self.nav_path_points:
+                if not self._follow_path_with_avoidance():
+                    # 路径完成
+                    self.get_logger().info('Path to CYAN complete, checking zone...')
+                    self.cancel_navigation()
+                    self.nav_path_points = []
+                return
 
-        # 墙壁避让：向空地走
-        if self.is_navigation_active():
-            self._apply_wall_avoidance()
-            self._check_nav_stuck()
+            # 没有路径，请求Nav2规划
+            if not self.is_navigation_active():
+                self.clear_costmaps(reset_obstacle_layer=True)
+                if self.cyan_nav_counter % 50 == 1:
+                    self.get_logger().info(f'Requesting path to CYAN zone... counter={self.cyan_nav_counter}')
+                self.send_nav_goal(self.cyan_zone_approx[0], self.cyan_zone_approx[1])
+        else:
+            # 使用Nav2直接控制（备用模式）
+            if not self.is_navigation_active():
+                self.clear_costmaps(reset_obstacle_layer=True)
+                if self.cyan_nav_counter % 50 == 1:
+                    self.get_logger().info(f'Going to CYAN zone... counter={self.cyan_nav_counter}')
+                self.send_nav_goal(self.cyan_zone_approx[0], self.cyan_zone_approx[1])
+
+            # 墙壁避让 + 卡住检测
+            if self.is_navigation_active():
+                self._apply_wall_avoidance()
+                self._check_nav_stuck()
 
     def _handle_decontaminating(self):
         """Decontaminate at cyan zone."""
@@ -1855,6 +2168,7 @@ class CleanerBot(Node):
                     self.get_logger().info('DECONTAMINATED! -> SEARCHING')
                     self._select_nearest_waypoint()
                     self.waypoint_before_pickup = None
+                    self.nav_path_points = []  # 清空路径
                     self.state = State.SEARCHING
                 else:
                     # 消毒失败，记录并重试
@@ -1868,6 +2182,7 @@ class CleanerBot(Node):
                         self.decontam_retry_count = 0
                         self._select_nearest_waypoint()
                         self.waypoint_before_pickup = None
+                        self.nav_path_points = []  # 清空路径
                         self.state = State.SEARCHING
                     else:
                         # 向前移动一点再重试
