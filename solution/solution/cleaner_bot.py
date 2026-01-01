@@ -48,6 +48,7 @@ class State(Enum):
     SEARCHING = auto()
     SCANNING = auto()     # 到达巡视点后旋转360°扫描
     APPROACHING = auto()  # Nav2 getting close to barrel
+    APPROACH_REPOSITION = auto()  # 向空旷方向移动后重试APPROACHING
     RAMMING = auto()      # Direct forward to push through barrel
     RECOVER_LOCALIZATION = auto()  # Spin to fix AMCL after ramming
     NAVIGATING_TO_GREEN = auto()
@@ -803,6 +804,9 @@ class CleanerBot(Node):
         elif self.state == State.APPROACHING:
             self._handle_approaching()
 
+        elif self.state == State.APPROACH_REPOSITION:
+            self._handle_approach_reposition()
+
         elif self.state == State.RAMMING:
             self._handle_ramming()
 
@@ -1076,9 +1080,22 @@ class CleanerBot(Node):
         """
         self.approach_counter += 1
 
-        # APPROACHING超时：如果300 ticks (30秒) 还没进入RAMMING，放弃
+        # APPROACHING超时：如果300 ticks (30秒) 还没进入RAMMING
         MAX_APPROACH_TICKS = 300
         if self.approach_counter > MAX_APPROACH_TICKS:
+            # 超时前检查：如果还能看到桶，重置计数器继续尝试
+            red_barrels_check = self.get_red_barrels()
+            if red_barrels_check:
+                best_check = max(red_barrels_check, key=lambda b: b.size)
+                if best_check.size > 2000:  # 还能看到较大的桶
+                    self.get_logger().info(f'APPROACHING timeout but barrel visible (size={best_check.size:.0f}), repositioning and retry')
+                    self.cancel_navigation()
+                    # 向空旷方向移动一点再继续
+                    self.approach_counter = 200  # 重置但不完全清零，给10秒继续尝试
+                    self.approach_reposition_counter = 0
+                    self.state = State.APPROACH_REPOSITION
+                    return
+            # 看不到桶或桶太小，放弃
             self.get_logger().warn(f'APPROACHING timeout ({self.approach_counter} ticks), giving up')
             self.cancel_navigation()
             self.approach_target = None
@@ -1136,7 +1153,7 @@ class CleanerBot(Node):
             self.lost_sight_counter += 1
             # 丢失视野太久，可能桶被推开或者根本不是桶
             # 不要轻易进入RAMMING，返回SEARCHING重新寻找
-            if self.lost_sight_counter > 30:  # 3秒看不到桶
+            if self.lost_sight_counter > 60:  # 6秒看不到桶
                 self.get_logger().warn(f'Lost sight for too long ({self.lost_sight_counter} ticks) -> back to SEARCHING')
                 self.cancel_navigation()
                 self.approach_target = None
@@ -1158,6 +1175,54 @@ class CleanerBot(Node):
             self.get_logger().info(
                 f'APPROACHING: count={self.approach_counter} front={self.front_min_dist:.2f}m nav_active={self.nav_active}{barrel_info}'
             )
+
+    def _handle_approach_reposition(self):
+        """APPROACH_REPOSITION: 向空旷方向移动一点后重试APPROACHING。
+
+        比较左右两侧距离，向更空旷的方向移动约1秒，然后清除costmap重新尝试。
+        """
+        self.approach_reposition_counter += 1
+
+        # 移动20个tick（2秒）
+        REPOSITION_TICKS = 20
+
+        if self.approach_reposition_counter <= REPOSITION_TICKS:
+            twist = Twist()
+            # 根据左右距离决定移动方向
+            if self.left_side_min_dist > self.right_side_min_dist:
+                # 左边更空旷，向左前方移动
+                twist.linear.x = 0.15
+                twist.angular.z = 0.3
+            else:
+                # 右边更空旷，向右前方移动
+                twist.linear.x = 0.15
+                twist.angular.z = -0.3
+
+            self.cmd_vel_pub.publish(twist)
+
+            if self.approach_reposition_counter % 10 == 0:
+                self.get_logger().info(f'REPOSITION: moving to open space ({self.approach_reposition_counter}/{REPOSITION_TICKS})')
+        else:
+            # 移动完成，清除costmap，重新尝试APPROACHING
+            self.get_logger().info('REPOSITION complete, clearing costmap and retrying APPROACHING')
+            self.stop_robot()
+            self.clear_costmaps()
+
+            # 重新获取桶位置
+            red_barrels = self.get_red_barrels()
+            if red_barrels:
+                best = max(red_barrels, key=lambda b: b.size)
+                new_pos = self.estimate_barrel_world_position(best)
+                if new_pos:
+                    self.approach_target = new_pos
+                    self.lost_sight_counter = 0
+                    self.state = State.APPROACHING
+                    return
+
+            # 看不到桶了，返回SEARCHING
+            self.get_logger().warn('Lost barrel after reposition, back to SEARCHING')
+            self.approach_target = None
+            self.state = State.SEARCHING
 
     def _handle_ramming(self):
         """Ram: 向前靠近 → 刹停 → 旋转180度 → 刹停 → 向后倒车 + 持续尝试pickup
