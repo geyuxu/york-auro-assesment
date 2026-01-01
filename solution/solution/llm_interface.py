@@ -221,23 +221,46 @@ STATE MACHINE STATES:
 - NAVIGATING_TO_CYAN: Going to decontaminate
 - DELIVERING/DECONTAMINATING: Service calls in progress
 
-ACTIONS (respond with ONE):
-- CONTINUE: Let default state machine handle it (recommended most of time)
+ACTIONS - You can either use high-level state commands OR direct motion control:
+
+HIGH-LEVEL COMMANDS:
+- CONTINUE: Let default state machine handle it
 - SEARCH: Force return to searching state
 - APPROACH: Approach visible barrel (only if barrels visible)
 - DELIVER: Go to green zone (only if carrying barrel)
 - DECONTAMINATE: Go to cyan zone (if radiation high)
-- WAIT: Stop and wait (emergency only)
+
+DIRECT MOTION CONTROL (use when you need precise control):
+- FORWARD: Move forward (0.2 m/s)
+- FORWARD_SLOW: Move forward slowly (0.1 m/s)
+- BACKWARD: Move backward (-0.15 m/s)
+- TURN_LEFT: Rotate left (0.5 rad/s)
+- TURN_RIGHT: Rotate right (-0.5 rad/s)
+- TURN_LEFT_SLOW: Rotate left slowly (0.3 rad/s)
+- TURN_RIGHT_SLOW: Rotate right slowly (-0.3 rad/s)
+- STOP: Stop all motion
+
+COMBINED MOTION (move and turn simultaneously):
+- FORWARD_LEFT: Move forward while turning left
+- FORWARD_RIGHT: Move forward while turning right
+- BACKWARD_LEFT: Move backward while turning left
+- BACKWARD_RIGHT: Move backward while turning right
 
 DECISION GUIDELINES:
-1. If NOT carrying barrel and barrel visible (size>3000) -> APPROACH (collect it!)
-2. If carrying barrel -> CONTINUE (let it deliver)
-3. If radiation > 50 and not carrying barrel -> DECONTAMINATE
-4. If front distance < 0.3m -> might be stuck, CONTINUE to let recovery handle
-5. If NAVIGATING_TO_GREEN/CYAN but see a barrel very close (size>5000) and NOT carrying -> APPROACH
-6. Most of time -> CONTINUE (trust the state machine)
+1. If barrel visible and NOT carrying one:
+   - If barrel is centered (x near 320) and large -> FORWARD to approach
+   - If barrel is on left (x < 270) -> TURN_LEFT or FORWARD_LEFT to center it
+   - If barrel is on right (x > 370) -> TURN_RIGHT or FORWARD_RIGHT to center it
+2. If carrying barrel -> CONTINUE (let state machine deliver)
+3. If front distance < 0.3m and need to move forward -> BACKWARD first, then turn
+4. If stuck (not moving for a while) -> try BACKWARD then TURN_LEFT or TURN_RIGHT
+5. If see barrel very close (size > 10000) -> FORWARD_SLOW to not overshoot
 
-IMPORTANT: If robot sees a barrel nearby (large size) and is NOT carrying one, it should APPROACH to collect it, even if currently navigating somewhere else!
+IMPORTANT:
+- Use direct motion when you see a barrel and want to approach it precisely
+- Barrel x < 320 means it's on the LEFT side of camera
+- Barrel x > 320 means it's on the RIGHT side of camera
+- Larger barrel size = closer to robot
 
 Respond with ONLY the action name."""
 

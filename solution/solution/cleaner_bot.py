@@ -335,9 +335,11 @@ class CleanerBot(Node):
         # LLM interface initialization
         self.llm = get_llm_interface(self.get_logger())
         self.llm_enabled = self.llm.is_available()
-        self.llm_decision_interval = 50  # Check LLM every 50 ticks (5 seconds)
+        self.llm_decision_interval = 30  # Check LLM every 30 ticks (3 seconds) normally
+        self.llm_motion_interval = 10    # Check every 10 ticks (1 second) during direct motion
         self.llm_decision_counter = 0
         self.last_llm_action = None
+        self.llm_in_motion_control = False  # True when LLM is doing direct motion control
         if self.llm_enabled:
             self.get_logger().info('LLM integration enabled')
         else:
@@ -619,8 +621,11 @@ class CleanerBot(Node):
 
         self.llm_decision_counter += 1
 
+        # Use shorter interval during motion control for responsive control
+        interval = self.llm_motion_interval if self.llm_in_motion_control else self.llm_decision_interval
+
         # Only check every N ticks to avoid API spam
-        if self.llm_decision_counter < self.llm_decision_interval:
+        if self.llm_decision_counter < interval:
             return False
 
         self.llm_decision_counter = 0
@@ -681,11 +686,74 @@ class CleanerBot(Node):
                 if self.action_decontaminate():
                     return True
 
-        elif action == "WAIT":
+        elif action == "WAIT" or action == "STOP":
             self.action_stop()
             return True
 
+        # Direct motion control commands
+        elif action in self._get_motion_commands():
+            self._execute_motion_command(action)
+            self.llm_in_motion_control = True  # Enable faster polling
+            return True
+
+        # If we get here with a high-level command, exit motion control mode
+        self.llm_in_motion_control = False
         return False
+
+    def _get_motion_commands(self) -> set:
+        """Get the set of valid direct motion commands."""
+        return {
+            "FORWARD", "FORWARD_SLOW", "BACKWARD",
+            "TURN_LEFT", "TURN_RIGHT", "TURN_LEFT_SLOW", "TURN_RIGHT_SLOW",
+            "FORWARD_LEFT", "FORWARD_RIGHT", "BACKWARD_LEFT", "BACKWARD_RIGHT"
+        }
+
+    def _execute_motion_command(self, command: str):
+        """Execute a direct motion command from LLM.
+
+        Args:
+            command: Motion command string
+        """
+        twist = Twist()
+
+        # Linear velocities
+        SPEED_NORMAL = 0.2
+        SPEED_SLOW = 0.1
+        SPEED_BACKWARD = -0.15
+
+        # Angular velocities
+        TURN_NORMAL = 0.5
+        TURN_SLOW = 0.3
+
+        if command == "FORWARD":
+            twist.linear.x = SPEED_NORMAL
+        elif command == "FORWARD_SLOW":
+            twist.linear.x = SPEED_SLOW
+        elif command == "BACKWARD":
+            twist.linear.x = SPEED_BACKWARD
+        elif command == "TURN_LEFT":
+            twist.angular.z = TURN_NORMAL
+        elif command == "TURN_RIGHT":
+            twist.angular.z = -TURN_NORMAL
+        elif command == "TURN_LEFT_SLOW":
+            twist.angular.z = TURN_SLOW
+        elif command == "TURN_RIGHT_SLOW":
+            twist.angular.z = -TURN_SLOW
+        elif command == "FORWARD_LEFT":
+            twist.linear.x = SPEED_SLOW
+            twist.angular.z = TURN_SLOW
+        elif command == "FORWARD_RIGHT":
+            twist.linear.x = SPEED_SLOW
+            twist.angular.z = -TURN_SLOW
+        elif command == "BACKWARD_LEFT":
+            twist.linear.x = SPEED_BACKWARD
+            twist.angular.z = TURN_SLOW
+        elif command == "BACKWARD_RIGHT":
+            twist.linear.x = SPEED_BACKWARD
+            twist.angular.z = -TURN_SLOW
+
+        self.cmd_vel_pub.publish(twist)
+        self.get_logger().info(f'[LLM MOTION] {command}: linear={twist.linear.x:.2f} angular={twist.angular.z:.2f}')
 
     # ==================== HELPERS ====================
 
