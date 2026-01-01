@@ -677,6 +677,8 @@ class CleanerBot(Node):
             # 导航失败（被取消、超时、无法规划路径等）
             self.get_logger().warn(f'Nav failed with status: {result.status}')
             self.nav_fail_count += 1
+            # 每次失败都清除costmap，避免幽灵障碍物累积
+            self.clear_costmaps()
             if self.nav_fail_count >= self.MAX_NAV_FAILS:
                 self.get_logger().warn(f'Nav failed {self.nav_fail_count} times, skipping waypoint')
                 self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.search_waypoints)
@@ -955,35 +957,70 @@ class CleanerBot(Node):
             self._apply_wall_avoidance()
 
     def _apply_wall_avoidance(self):
-        """根据左右两侧雷达距离，给小车一点转向速度避免蹭墙。
+        """根据雷达距离，主动向空旷方向行走，避免蹭墙/撞墙角。
 
-        条件：
-        - 只有一侧靠近墙壁时才转向
-        - 两侧都有墙或都没墙时不转向
-        - 距离墙较远时不转向
+        逻辑：
+        - 前方太近：后退
+        - 墙角检测：前侧方太近时，转向+前进向空地走
+        - 一侧靠近墙壁：转向+前进向空地走（比例控制）
+        - 两侧都有墙或都远：不干预Nav2
         """
-        WALL_CLOSE_THRESHOLD = 0.5   # 靠近墙壁的阈值
-        TURN_SPEED = 0.15            # 转向速度
+        WALL_DANGER = 0.3    # 危险距离，强烈避让
+        WALL_CLOSE = 0.5     # 靠近距离，轻微避让
+        FRONT_DANGER = 0.4   # 前方危险距离
 
         left_dist = self.left_side_min_dist
         right_dist = self.right_side_min_dist
-
-        left_close = left_dist < WALL_CLOSE_THRESHOLD
-        right_close = right_dist < WALL_CLOSE_THRESHOLD
+        front_left = self.front_left_min_dist
+        front_right = self.front_right_min_dist
+        front = self.front_min_dist
 
         twist = Twist()
-        twist.linear.x = 0.0  # 不影响前进速度，Nav2控制
+        twist.linear.x = 0.0
+        twist.angular.z = 0.0
 
-        # 只有一侧靠近墙壁时才转向
+        # 墙角检测：前侧方太近，转向+向空地走
+        if front_left < WALL_DANGER and front_right > WALL_CLOSE:
+            # 左前方有障碍，向右前方走
+            twist.linear.x = 0.15  # 向前走
+            twist.angular.z = -0.5  # 右转
+            self.cmd_vel_pub.publish(twist)
+            return
+        elif front_right < WALL_DANGER and front_left > WALL_CLOSE:
+            # 右前方有障碍，向左前方走
+            twist.linear.x = 0.15  # 向前走
+            twist.angular.z = 0.5   # 左转
+            self.cmd_vel_pub.publish(twist)
+            return
+
+        # 前方太近，需要后退并转向空地
+        if front < FRONT_DANGER:
+            twist.linear.x = -0.15  # 后退
+            # 向更空旷的一侧转
+            if left_dist > right_dist:
+                twist.angular.z = 0.3  # 左转
+            else:
+                twist.angular.z = -0.3  # 右转
+            self.cmd_vel_pub.publish(twist)
+            return
+
+        # 侧面墙壁检测（比例控制）- 向空地走
+        left_close = left_dist < WALL_CLOSE
+        right_close = right_dist < WALL_CLOSE
+
         if left_close and not right_close:
-            # 左边有墙，向右转
-            twist.angular.z = -TURN_SPEED
+            # 左边有墙，向右前方走（距离越近越强烈）
+            strength = (WALL_CLOSE - left_dist) / WALL_CLOSE
+            twist.linear.x = 0.1 + strength * 0.1  # 向前走
+            twist.angular.z = -max(0.15, strength * 0.4)  # 右转
             self.cmd_vel_pub.publish(twist)
         elif right_close and not left_close:
-            # 右边有墙，向左转
-            twist.angular.z = TURN_SPEED
+            # 右边有墙，向左前方走
+            strength = (WALL_CLOSE - right_dist) / WALL_CLOSE
+            twist.linear.x = 0.1 + strength * 0.1  # 向前走
+            twist.angular.z = max(0.15, strength * 0.4)  # 左转
             self.cmd_vel_pub.publish(twist)
-        # 两边都有墙或两边都远，不转向（让Nav2处理）
+        # 两边都有墙或两边都远，不干预Nav2
 
     def _handle_scanning(self):
         """SCANNING: 到达巡视点后左右扫描寻找红桶。
@@ -1534,6 +1571,10 @@ class CleanerBot(Node):
                 self.get_logger().info(f'Going to GREEN zone... counter={self.green_nav_counter}')
             self.send_nav_goal(self.green_zone_approx[0], self.green_zone_approx[1])
 
+        # 墙壁避让：向空地走
+        if self.is_navigation_active():
+            self._apply_wall_avoidance()
+
     def _handle_delivering(self):
         """Deliver barrel at green zone - 进入绿区就放下桶."""
         # 检查服务调用结果
@@ -1645,6 +1686,10 @@ class CleanerBot(Node):
             if self.cyan_nav_counter % 50 == 1:
                 self.get_logger().info(f'Going to CYAN zone... counter={self.cyan_nav_counter}')
             self.send_nav_goal(self.cyan_zone_approx[0], self.cyan_zone_approx[1])
+
+        # 墙壁避让：向空地走
+        if self.is_navigation_active():
+            self._apply_wall_avoidance()
 
     def _handle_decontaminating(self):
         """Decontaminate at cyan zone."""
